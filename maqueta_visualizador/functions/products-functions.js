@@ -273,19 +273,23 @@
     async function handleDelete(id) {
       const item = state.products.find((row) => Number(row["N°"]) === Number(id));
       const ok = await openConfirmDialog({
-        title: "Eliminar producto",
-        message: `Deseas eliminar el producto N° ${id}${item ? ` - ${item.NOMBRE}` : ""}?\nEsta accion no se puede deshacer.`,
-        confirmText: "Eliminar producto"
+        title: "Inactivar producto",
+        message: `Deseas inactivar el producto N° ${id}${item ? ` - ${item.NOMBRE}` : ""}?\nNo se eliminará de la base de datos.`,
+        confirmText: "Inactivar producto"
       });
       if (!ok) return;
 
       try {
-        await apiRequest(`/api/productos/${id}`, { method: "DELETE" });
+        const updated = await apiRequest(`/api/productos/${id}`, { method: "DELETE" });
         if (state.editingId === Number(id)) {
           closeDialog();
           clearCrudForm();
         }
-        setCrudMessage(`Producto N° ${id} eliminado.`, "is-success");
+        if (String(updated?.ESTADO || "").toUpperCase() === "INACTIVO") {
+          setCrudMessage(`Producto N° ${id} marcado como INACTIVO.`, "is-success");
+        } else {
+          setCrudMessage(`Producto N° ${id} actualizado.`, "is-success");
+        }
         await refreshAll({ keepMessages: true });
       } catch (error) {
         state.apiConnected = false;

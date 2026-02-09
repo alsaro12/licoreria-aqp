@@ -1071,19 +1071,15 @@ async function deleteProduct(idInput) {
     const current = Array.isArray(rows) && rows.length ? rows[0] : null;
     if (!current) throw createHttpError(404, `No existe producto con N° ${id}.`);
 
-    try {
-      await connection.query("DELETE FROM productos WHERE id = ?", [id]);
-    } catch (error) {
-      if (error?.errno === 1451 || error?.code === "ER_ROW_IS_REFERENCED_2") {
-        throw createHttpError(
-          409,
-          `No puedes eliminar N° ${id} porque tiene ventas o movimientos de kardex relacionados.`
-        );
-      }
-      throw error;
+    const currentStatus = normalizeProductStatus(current.estado) || "ACTIVO";
+    if (currentStatus !== "INACTIVO") {
+      await connection.query("UPDATE productos SET estado = ? WHERE id = ?", ["INACTIVO", id]);
     }
 
-    return productRowToApi(current);
+    return productRowToApi({
+      ...current,
+      estado: "INACTIVO"
+    });
   });
 }
 

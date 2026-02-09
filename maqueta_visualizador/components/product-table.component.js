@@ -18,7 +18,7 @@
         <td>
           <button class="action-btn ingreso" data-action="ingreso" data-id="${item["N°"]}" type="button">Ingreso</button>
           <button class="action-btn edit" data-action="edit" data-id="${item["N°"]}" type="button">Editar</button>
-          <button class="action-btn delete" data-action="delete" data-id="${item["N°"]}" type="button">Eliminar</button>
+          <button class="action-btn delete" data-action="delete" data-id="${item["N°"]}" type="button">Inactivar</button>
         </td>
       </tr>
     `
