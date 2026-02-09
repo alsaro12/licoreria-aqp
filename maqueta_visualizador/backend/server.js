@@ -729,6 +729,7 @@ function productRowToApi(row) {
 function saleRowToApi(row) {
   const saleDate = extractIsoDateOnly(row?.fecha_venta) || todayIsoDate();
   const operativeDate = extractIsoDateOnly(row?.fecha_operativa) || "";
+  const saleStatus = normalizeText(row?.estado || "ACTIVA") === "anulada" ? "ANULADA" : "ACTIVA";
   return {
     ID_VENTA: toInt(row?.id_venta, 0),
     FECHA_VENTA: saleDate,
@@ -739,7 +740,10 @@ function saleRowToApi(row) {
     PRECIO: round2(row?.precio),
     TOTAL: round2(row?.total),
     TIPO_PAGO: normalizePaymentType(row?.tipo_pago),
-    ORIGEN: trimValue(row?.origen || "MANUAL") || "MANUAL"
+    ORIGEN: trimValue(row?.origen || "MANUAL") || "MANUAL",
+    ESTADO: saleStatus,
+    ANULADA_AT: trimValue(row?.anulada_at || ""),
+    ANULADA_MOTIVO: trimValue(row?.anulada_motivo || "")
   };
 }
 
@@ -747,6 +751,7 @@ function kardexRowToApi(row) {
   return {
     ID_MOV: toInt(row?.id_mov, 0),
     FECHA_HORA: trimValue(row?.fecha_hora || ""),
+    ID_VENTA: toInt(row?.venta_id, 0),
     "N°": toInt(row?.producto_id, 0),
     NOMBRE: trimValue(row?.nombre_snapshot || ""),
     TIPO: normalizeKardexType(row?.tipo) || "SALIDA",
@@ -770,12 +775,14 @@ async function ensureKardexTable(connection) {
       stock_antes DECIMAL(12,2) UNSIGNED NOT NULL,
       stock_despues DECIMAL(12,2) UNSIGNED NOT NULL,
       referencia VARCHAR(80) NULL,
+      venta_id INT NULL,
       nota VARCHAR(255) NULL,
       PRIMARY KEY (id_mov),
       KEY idx_kardex_fecha_hora (fecha_hora),
       KEY idx_kardex_producto (producto_id),
       KEY idx_kardex_tipo (tipo),
-      KEY idx_kardex_referencia (referencia)
+      KEY idx_kardex_referencia (referencia),
+      KEY idx_kardex_venta_id (venta_id)
     ) ENGINE=InnoDB
   `);
 }
@@ -798,18 +805,24 @@ async function insertKardexMovement(connection, payload) {
   const reference = truncateText(payload.referencia || "", 80);
   const note = truncateText(payload.nota || "", 255);
   const fechaHora = toMysqlDateTime(payload.fechaHora || new Date());
+  const saleIdRaw = payload.ventaId ?? payload.venta_id ?? payload.ID_VENTA;
+  const saleId =
+    saleIdRaw === undefined || saleIdRaw === null || trimValue(saleIdRaw) === ""
+      ? null
+      : parsePositiveInt(saleIdRaw, "venta_id");
 
   try {
     const [result] = await connection.query(
       `INSERT INTO kardex_movimientos
-       (fecha_hora, producto_id, nombre_snapshot, tipo, cantidad, stock_antes, stock_despues, referencia, nota)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [fechaHora, productId, name, type, quantity, stockBefore, stockAfter, reference || null, note || null]
+       (fecha_hora, producto_id, nombre_snapshot, tipo, cantidad, stock_antes, stock_despues, referencia, venta_id, nota)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [fechaHora, productId, name, type, quantity, stockBefore, stockAfter, reference || null, saleId, note || null]
     );
 
     return {
       ID_MOV: toInt(result?.insertId, 0),
       FECHA_HORA: fechaHora,
+      ID_VENTA: saleId || 0,
       "N°": productId,
       NOMBRE: name,
       TIPO: type,
@@ -838,7 +851,7 @@ async function readProductsAll() {
 async function readSalesAll() {
   return withMysqlConnection(async (connection) => {
     const [rows] = await connection.query(
-      `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
+      `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen, estado, anulada_at, anulada_motivo
        FROM ventas_diarias
        ORDER BY fecha_venta DESC, id_venta DESC`
     );
@@ -850,7 +863,7 @@ async function readKardexAll() {
   return withMysqlConnection(async (connection) => {
     try {
       const [rows] = await connection.query(
-        `SELECT id_mov, fecha_hora, producto_id, nombre_snapshot, tipo, cantidad, stock_antes, stock_despues, referencia, nota
+        `SELECT id_mov, fecha_hora, producto_id, nombre_snapshot, tipo, cantidad, stock_antes, stock_despues, referencia, venta_id, nota
          FROM kardex_movimientos
          ORDER BY fecha_hora DESC, id_mov DESC`
       );
@@ -867,7 +880,7 @@ async function deleteKardexMovement(idInput) {
   return withMysqlConnection(async (connection) => {
     try {
       const [rows] = await connection.query(
-        `SELECT id_mov, fecha_hora, producto_id, nombre_snapshot, tipo, cantidad, stock_antes, stock_despues, referencia, nota
+        `SELECT id_mov, fecha_hora, producto_id, nombre_snapshot, tipo, cantidad, stock_antes, stock_despues, referencia, venta_id, nota
          FROM kardex_movimientos
          WHERE id_mov = ?
          LIMIT 1`,
@@ -1216,7 +1229,7 @@ async function registerSale(payload) {
       );
 
       const [savedSaleRows] = await connection.query(
-        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
+        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen, estado, anulada_at, anulada_motivo
          FROM ventas_diarias
          WHERE id_venta = ?
          LIMIT 1`,
@@ -1235,7 +1248,10 @@ async function registerSale(payload) {
               precio: price,
               total,
               tipo_pago: tipoPago,
-              origen: "MANUAL"
+              origen: "MANUAL",
+              estado: "ACTIVA",
+              anulada_at: null,
+              anulada_motivo: null
             };
 
       const movement = await insertKardexMovement(connection, {
@@ -1246,6 +1262,7 @@ async function registerSale(payload) {
         stockAntes: stockBefore,
         stockDespues: stockAfter,
         referencia: "VENTA",
+        ventaId: toInt(saleResult?.insertId, 0),
         nota: note || `Venta #${saleResult.insertId}`
       });
 
@@ -1285,13 +1302,16 @@ async function updateSale(idInput, payload) {
     await connection.beginTransaction();
     try {
       const [saleRows] = await connection.query(
-        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
+        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen, estado, anulada_at, anulada_motivo
          FROM ventas_diarias
          WHERE id_venta = ? FOR UPDATE`,
         [saleId]
       );
       const currentSale = Array.isArray(saleRows) && saleRows.length ? saleRows[0] : null;
       if (!currentSale) throw createHttpError(404, `No existe venta #${saleId}.`);
+      if (normalizeText(currentSale.estado || "ACTIVA") === "anulada") {
+        throw createHttpError(409, `No puedes editar la venta #${saleId} porque está ANULADA.`);
+      }
 
       const currentProductId = toInt(currentSale.producto_id, 0);
       const currentQuantity = round2(currentSale.cantidad);
@@ -1319,6 +1339,7 @@ async function updateSale(idInput, payload) {
           stockAntes: currentBeforeRevert,
           stockDespues: currentAfterRevert,
           referencia: "VENTA_EDITADA",
+          ventaId: saleId,
           nota: `Reversion venta #${saleId}`
         })
       );
@@ -1356,6 +1377,7 @@ async function updateSale(idInput, payload) {
           stockAntes: targetStockBefore,
           stockDespues: targetStockAfter,
           referencia: "VENTA_EDITADA",
+          ventaId: saleId,
           nota: `Aplicacion venta editada #${saleId}`
         })
       );
@@ -1381,7 +1403,7 @@ async function updateSale(idInput, payload) {
       );
 
       const [updatedSaleRows] = await connection.query(
-        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
+        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen, estado, anulada_at, anulada_motivo
          FROM ventas_diarias
          WHERE id_venta = ?
          LIMIT 1`,
@@ -1400,7 +1422,10 @@ async function updateSale(idInput, payload) {
               precio: finalPrice,
               total: finalTotal,
               tipo_pago: tipoPago,
-              origen: trimValue(currentSale.origen || "MANUAL") || "MANUAL"
+              origen: trimValue(currentSale.origen || "MANUAL") || "MANUAL",
+              estado: "ACTIVA",
+              anulada_at: null,
+              anulada_motivo: null
             };
 
       await connection.commit();
@@ -1412,6 +1437,99 @@ async function updateSale(idInput, payload) {
           CATEGORIA: trimValue(targetProduct.categoria || "OTROS") || "OTROS"
         },
         movements
+      };
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch {
+        // noop
+      }
+      throw error;
+    }
+  });
+}
+
+async function deleteSale(idInput, payload = {}) {
+  const saleId = parsePositiveInt(idInput, "ID_VENTA");
+
+  return withMysqlConnection(async (connection) => {
+    await connection.beginTransaction();
+    try {
+      const [saleRows] = await connection.query(
+        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen, estado, anulada_at, anulada_motivo
+         FROM ventas_diarias
+         WHERE id_venta = ? FOR UPDATE`,
+        [saleId]
+      );
+      const currentSale = Array.isArray(saleRows) && saleRows.length ? saleRows[0] : null;
+      if (!currentSale) throw createHttpError(404, `No existe venta #${saleId}.`);
+      if (normalizeText(currentSale.estado || "ACTIVA") === "anulada") {
+        throw createHttpError(409, `La venta #${saleId} ya está ANULADA.`);
+      }
+      const cancelReason = truncateText(
+        payload.motivo || payload.anulada_motivo || payload.reason || `Anulación manual venta #${saleId}`,
+        255
+      );
+
+      const productId = toInt(currentSale.producto_id, 0);
+      const quantity = round2(currentSale.cantidad);
+      const [productRows] = await connection.query(
+        "SELECT id, nombre, categoria, precio, pedido, stock_actual, estado FROM productos WHERE id = ? FOR UPDATE",
+        [productId]
+      );
+      const product = Array.isArray(productRows) && productRows.length ? productRows[0] : null;
+      if (!product) throw createHttpError(404, `No existe producto N° ${productId} asociado a la venta #${saleId}.`);
+
+      const stockBefore = round2(product.stock_actual);
+      const stockAfter = round2(stockBefore + quantity);
+      await connection.query("UPDATE productos SET stock_actual = ? WHERE id = ?", [stockAfter, productId]);
+
+      await connection.query(
+        `UPDATE ventas_diarias
+         SET estado = 'ANULADA', anulada_at = NOW(), anulada_motivo = ?
+         WHERE id_venta = ?`,
+        [cancelReason, saleId]
+      );
+
+      const [updatedSaleRows] = await connection.query(
+        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen, estado, anulada_at, anulada_motivo
+         FROM ventas_diarias
+         WHERE id_venta = ?
+         LIMIT 1`,
+        [saleId]
+      );
+      const updatedSale =
+        Array.isArray(updatedSaleRows) && updatedSaleRows.length
+          ? updatedSaleRows[0]
+          : {
+              ...currentSale,
+              estado: "ANULADA",
+              anulada_at: nowIso(),
+              anulada_motivo: cancelReason
+            };
+
+      const movement = await insertKardexMovement(connection, {
+        productId,
+        nombre: product.nombre,
+        tipo: "INGRESO",
+        cantidad: quantity,
+        stockAntes: stockBefore,
+        stockDespues: stockAfter,
+        referencia: "VENTA_ANULADA",
+        ventaId: saleId,
+        nota: cancelReason
+      });
+
+      await connection.commit();
+
+      return {
+        ok: true,
+        sale: saleRowToApi(updatedSale),
+        product: {
+          ...productRowToApi({ ...product, stock_actual: stockAfter }),
+          CATEGORIA: trimValue(product.categoria || "OTROS") || "OTROS"
+        },
+        movement
       };
     } catch (error) {
       try {
@@ -1559,6 +1677,7 @@ async function buildDailySalesExportCsv(connection, options = {}) {
         SELECT DATE(fecha_venta) AS fecha, producto_id, SUM(cantidad) AS venta_dia
         FROM ventas_diarias
         WHERE DATE(fecha_venta) BETWEEN ? AND ?
+          AND COALESCE(estado, 'ACTIVA') = 'ACTIVA'
           AND producto_id IN (${placeholders})
         GROUP BY DATE(fecha_venta), producto_id
       `,
@@ -1899,14 +2018,19 @@ async function handleVentasCollection(req, res, query) {
     const term = normalizeText(query.get("q"));
     const from = normalizeIsoDateOnly(query.get("from"));
     const to = normalizeIsoDateOnly(query.get("to"));
+    const statusFilter = normalizeText(query.get("estado") || "todos");
     const filtered = items.filter((item) => {
       if (!matchDateRange(item.FECHA_VENTA, from, to)) return false;
+      const itemStatus = normalizeText(item.ESTADO || "ACTIVA");
+      const matchesStatus = !statusFilter || statusFilter === "todos" || itemStatus === statusFilter;
+      if (!matchesStatus) return false;
       if (!term) return true;
       return (
         normalizeText(item.NOMBRE).includes(term) ||
         String(item["N°"]).includes(term) ||
         String(item.FECHA_VENTA || "").includes(term) ||
         String(item.FECHA_OPERATIVA || "").includes(term) ||
+        normalizeText(item.ESTADO || "ACTIVA").includes(term) ||
         String(item.CANTIDAD).includes(term) ||
         normalizeText(item.TIPO_PAGO).includes(term)
       );
@@ -1926,6 +2050,7 @@ async function handleVentasCollection(req, res, query) {
         TOTAL: (item) => toNumber(item.TOTAL, 0),
         TIPO_PAGO: (item) => trimValue(item.TIPO_PAGO || ""),
         ORIGEN: (item) => trimValue(item.ORIGEN || ""),
+        ESTADO: (item) => trimValue(item.ESTADO || "ACTIVA"),
         ID_VENTA: (item) => toInt(item.ID_VENTA, 0)
       }
     });
@@ -1966,6 +2091,18 @@ async function handleVentasById(req, res, id) {
       productId: result.sale["N°"],
       cantidad: result.sale.CANTIDAD,
       fecha: result.sale.FECHA_VENTA
+    });
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    const result = await deleteSale(id);
+    logInfo("Venta anulada", {
+      saleId: result?.sale?.ID_VENTA || toInt(id, 0),
+      productId: result?.product?.["N°"] || null,
+      restoredStock: result?.product?.STOCK_ACTUAL ?? null,
+      kardexId: result?.movement?.ID_MOV || null
     });
     sendJson(res, 200, result);
     return;

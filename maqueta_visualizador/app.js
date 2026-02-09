@@ -238,6 +238,7 @@ function initControllers() {
       showSaleConfirmBox,
       hideSaleConfirmBox,
       setSaleMessage,
+      openConfirmDialog,
       setSaleQuantityValue,
       renderSaleProductOptions,
       updateSaleTotalsPreview,
@@ -498,7 +499,7 @@ function getSaleProductsSource() {
   const source = state.productCatalog.length ? state.productCatalog : state.products;
   return source.filter((item) => {
     const status = String(item?.ESTADO || "ACTIVO").trim().toUpperCase();
-    return status !== "INACTIVO";
+    return status === "ACTIVO";
   });
 }
 
@@ -1047,6 +1048,7 @@ function renderKpis() {
   const salesSource = state.salesAll.length ? state.salesAll : state.sales;
   const kardexSource = state.kardexAll.length ? state.kardexAll : state.kardex;
   const salesInRange = salesSource.filter((item) =>
+    String(item?.ESTADO || "ACTIVA").toUpperCase() !== "ANULADA" &&
     matchDateRange(item.FECHA_VENTA, state.salesDateFrom, state.salesDateTo)
   );
   const kardexInRange = kardexSource.filter((item) =>
@@ -1394,6 +1396,10 @@ function handleSaleConfirmBack() {
 
 async function handleSaleConfirmSubmit() {
   return salesController.handleSaleConfirmSubmit();
+}
+
+async function handleDeleteSale(saleId) {
+  return salesController.handleDeleteSale(saleId);
 }
 
 async function handleApiBaseSave(event) {
@@ -1797,11 +1803,17 @@ function bindEvents() {
   refs.saleForm.addEventListener("submit", handleSaleSubmit);
 
   refs.salesBody.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-action='edit-sale']");
+    const button = event.target.closest("button[data-action]");
     if (!button) return;
     const saleId = Number.parseInt(button.dataset.saleId, 10);
     if (!saleId) return;
-    openEditSaleDialog(saleId);
+    if (button.dataset.action === "edit-sale") {
+      openEditSaleDialog(saleId);
+      return;
+    }
+    if (button.dataset.action === "delete-sale") {
+      handleDeleteSale(saleId);
+    }
   });
 
   refs.crudBody.addEventListener("click", (event) => {

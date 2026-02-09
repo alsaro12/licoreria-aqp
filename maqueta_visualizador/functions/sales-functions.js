@@ -11,6 +11,7 @@
       String(item["N°"] ?? "").includes(term) ||
       String(item.FECHA_VENTA ?? "").includes(term) ||
       String(item.FECHA_OPERATIVA ?? "").includes(term) ||
+      normalizeText(item.ESTADO ?? "ACTIVA").includes(norm) ||
       String(item.CANTIDAD ?? "").includes(term) ||
       normalizeText(item.TIPO_PAGO ?? "").includes(norm) ||
       normalizeText(item.NOMBRE ?? "").includes(norm)
@@ -39,7 +40,7 @@
     const rows = state.pagedSales || [];
     refs.salesBody.innerHTML = rows.length
       ? renderSalesRows(rows)
-      : '<tr><td class="empty" colspan="10">No hay ventas para este filtro.</td></tr>';
+      : '<tr><td class="empty" colspan="11">No hay ventas para este filtro.</td></tr>';
   }
 
   function renderSalesPager(refs, state) {
@@ -73,6 +74,7 @@
       showSaleConfirmBox,
       hideSaleConfirmBox,
       setSaleMessage,
+      openConfirmDialog,
       setSaleQuantityValue,
       renderSaleProductOptions,
       updateSaleTotalsPreview,
@@ -132,6 +134,10 @@
       const sale = state.sales.find((item) => Number(item.ID_VENTA) === saleId);
       if (!sale) {
         setSaleMessage(`No se encontró la venta #${saleId}.`, "is-error");
+        return;
+      }
+      if (String(sale.ESTADO || "ACTIVA").toUpperCase() === "ANULADA") {
+        setSaleMessage(`La venta #${saleId} está ANULADA y no se puede editar.`, "is-error");
         return;
       }
       const products = getSaleProductsSource();
@@ -328,6 +334,45 @@
       }
     }
 
+    async function handleDeleteSale(saleIdInput) {
+      const saleId = Number.parseInt(String(saleIdInput ?? ""), 10);
+      if (!saleId) return;
+
+      const source = state.salesAll.length ? state.salesAll : state.sales;
+      const sale = source.find((item) => Number(item.ID_VENTA) === saleId) || null;
+      if (sale && String(sale.ESTADO || "ACTIVA").toUpperCase() === "ANULADA") {
+        setSaleMessage(`La venta #${saleId} ya está ANULADA.`, "is-error");
+        return;
+      }
+      const productLabel = sale
+        ? `N° ${sale["N°"]}${sale.NOMBRE ? ` - ${sale.NOMBRE}` : ""}`
+        : `venta #${saleId}`;
+      const ok = await openConfirmDialog({
+        title: "Anular venta",
+        message: `Deseas anular la venta #${saleId} (${productLabel})?\nSe revertirá el stock y quedará trazabilidad en kardex.`,
+        confirmText: "Anular venta"
+      });
+      if (!ok) return;
+
+      try {
+        const result = await apiRequest(`/api/ventas/${saleId}`, { method: "DELETE" });
+        if (state.saleEditingId === saleId) {
+          closeSaleDialog();
+          resetSaleForm();
+        }
+        const restoredStock = result?.product?.STOCK_ACTUAL;
+        const stockMessage =
+          Number.isFinite(Number(restoredStock))
+            ? ` Stock actual N° ${result.product["N°"]}: ${formatQty(restoredStock)}.`
+            : "";
+        setSaleMessage(`Venta #${saleId} anulada.${stockMessage}`, "is-success");
+        await refreshAll({ keepMessages: true });
+      } catch (error) {
+        state.apiConnected = false;
+        setSaleMessage(error.message || "No se pudo anular la venta.", "is-error");
+      }
+    }
+
     function extractFilenameFromContentDisposition(headerValue) {
       const header = String(headerValue || "");
       if (!header) return "";
@@ -436,6 +481,7 @@
       handleSaleSubmit,
       handleSaleConfirmBack,
       handleSaleConfirmSubmit,
+      handleDeleteSale,
       handleExportSalesCsv
     };
   }
