@@ -770,6 +770,34 @@ tbody tr:hover {
   border-color: rgba(37, 99, 235, 0.24);
 }
 
+.sale-qty-control {
+  display: grid;
+  grid-template-columns: 40px minmax(70px, 1fr) 40px;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.sale-qty-control input {
+  text-align: center;
+}
+
+.sale-qty-step {
+  border: 1px solid rgba(16, 32, 52, 0.18);
+  background: rgba(255, 255, 255, 0.88);
+  color: #163b5f;
+  border-radius: 10px;
+  min-height: 40px;
+  font: inherit;
+  font-weight: 800;
+  font-size: 1.08rem;
+  cursor: pointer;
+}
+
+.sale-qty-step:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .dialog-form {
   margin: 0;
 }

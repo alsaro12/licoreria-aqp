@@ -464,7 +464,11 @@
         </label>
         <label>
           Cantidad
-          <input id="saleCantidad" type="number" min="0.01" step="0.01" required value="1" />
+          <div class="sale-qty-control">
+            <button id="saleQtyDownBtn" class="sale-qty-step" type="button" aria-label="Disminuir cantidad">-</button>
+            <input id="saleCantidad" type="number" min="1" step="1" required value="1" />
+            <button id="saleQtyUpBtn" class="sale-qty-step" type="button" aria-label="Aumentar cantidad">+</button>
+          </div>
         </label>
         <label>
           Precio unitario

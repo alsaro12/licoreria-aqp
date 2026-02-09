@@ -15,7 +15,7 @@ const API_BASE_STORAGE_KEY = "licoreria.api_base_url";
 const MOBILE_KPI_EXPANDED_STORAGE_KEY = "licoreria.mobile_kpi_expanded";
 const FALLBACK_API_BASE_URL = "https://api.escon.pe";
 const PAYMENT_TYPES = ["A Ya Per", "Efectivo", "Pedido Ya", "Rappi", "EasyPay"];
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.0.1";
 
 window.APP_VERSION = APP_VERSION;
 
@@ -123,7 +123,9 @@ const refs = {
   saleProductLookup: document.getElementById("saleProductLookup"),
   saleProductList: document.getElementById("saleProductList"),
   saleProductId: document.getElementById("saleProductId"),
+  saleQtyDownBtn: document.getElementById("saleQtyDownBtn"),
   saleCantidad: document.getElementById("saleCantidad"),
+  saleQtyUpBtn: document.getElementById("saleQtyUpBtn"),
   salePrecioPreview: document.getElementById("salePrecioPreview"),
   saleTotalPreview: document.getElementById("saleTotalPreview"),
   saleFecha: document.getElementById("saleFecha"),
@@ -954,7 +956,9 @@ function setSaleFormLocked(locked) {
   [
     refs.saleProductLookup,
     refs.saleProductId,
+    refs.saleQtyDownBtn,
     refs.saleCantidad,
+    refs.saleQtyUpBtn,
     refs.saleFecha,
     refs.saleTipoPago,
     refs.saleNota
@@ -976,6 +980,33 @@ function setSaleDialogMode(mode) {
   refs.saleConfirmSubmitBtn.textContent = isEdit ? "Guardar cambios" : "Guardar venta";
 }
 
+function normalizeSaleQuantityValue(raw, options = {}) {
+  const fallback = options.fallback ?? null;
+  const normalized = String(raw ?? "").replace(",", ".").trim();
+  if (!normalized) return fallback;
+  const parsed = Number.parseFloat(normalized);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.round(parsed));
+}
+
+function setSaleQuantityValue(raw, options = {}) {
+  const value = normalizeSaleQuantityValue(raw, { fallback: options.fallback ?? 1 });
+  refs.saleCantidad.value = String(value);
+  return value;
+}
+
+function normalizeSaleQuantityInput() {
+  setSaleQuantityValue(refs.saleCantidad.value, { fallback: 1 });
+  updateSaleTotalsPreview();
+}
+
+function changeSaleQuantity(delta) {
+  const step = Number.parseInt(String(delta ?? 0), 10);
+  const current = normalizeSaleQuantityValue(refs.saleCantidad.value, { fallback: 1 });
+  setSaleQuantityValue(current + step, { fallback: 1 });
+  updateSaleTotalsPreview();
+}
+
 function updateSaleTotalsPreview() {
   const products = getSaleProductsSource();
   const productId = Number.parseInt(refs.saleProductId.value, 10);
@@ -987,9 +1018,7 @@ function updateSaleTotalsPreview() {
   }
 
   const price = Number(product.PRECIO || 0);
-  const qtyRaw = String(refs.saleCantidad.value ?? "").replace(",", ".").trim();
-  const qty = Number.parseFloat(qtyRaw);
-  const safeQty = Number.isFinite(qty) && qty > 0 ? qty : 0;
+  const safeQty = normalizeSaleQuantityValue(refs.saleCantidad.value, { fallback: 1 });
   const total = round2(price * safeQty);
 
   refs.salePrecioPreview.value = money(price);
@@ -1022,7 +1051,7 @@ function resetSaleForm() {
   hideSaleConfirmBox({ clear: true });
   refs.saleProductLookup.value = "";
   refs.saleProductId.value = "";
-  refs.saleCantidad.value = "1";
+  setSaleQuantityValue(1);
   refs.salePrecioPreview.value = "-";
   refs.saleTotalPreview.value = "-";
   refs.saleTipoPago.value = "Efectivo";
@@ -1073,7 +1102,7 @@ function openEditSaleDialog(saleIdInput) {
   state.saleEditingId = saleId;
   setSaleDialogMode("edit");
   refs.saleFecha.value = normalizeDateValue(sale.FECHA) || todayInputValue();
-  refs.saleCantidad.value = String(formatQty(sale.CANTIDAD));
+  setSaleQuantityValue(sale.CANTIDAD, { fallback: 1 });
   refs.saleTipoPago.value = normalizePaymentType(sale.TIPO_PAGO);
   refs.saleNota.value = "";
   renderSaleProductOptions();
@@ -1608,9 +1637,13 @@ async function handleSaleSubmit(event) {
   try {
     syncSaleProductIdFromLookup();
     const tipoPago = normalizePaymentType(refs.saleTipoPago.value);
+    const cantidad = normalizeSaleQuantityValue(refs.saleCantidad.value);
+    if (!Number.isInteger(cantidad) || cantidad < 1) {
+      throw new Error("La cantidad debe ser un numero entero mayor o igual a 1.");
+    }
     const payload = {
       productId: Number.parseInt(refs.saleProductId.value, 10),
-      cantidad: parseNumberInput(refs.saleCantidad.value, { min: 0.01, label: "cantidad" }),
+      cantidad,
       fecha: refs.saleFecha.value || todayInputValue(),
       tipoPago,
       nota: refs.saleNota.value.trim()
@@ -2141,6 +2174,15 @@ function bindEvents() {
 
   refs.saleCantidad.addEventListener("input", () => {
     updateSaleTotalsPreview();
+  });
+  refs.saleCantidad.addEventListener("change", () => {
+    normalizeSaleQuantityInput();
+  });
+  refs.saleQtyDownBtn.addEventListener("click", () => {
+    changeSaleQuantity(-1);
+  });
+  refs.saleQtyUpBtn.addEventListener("click", () => {
+    changeSaleQuantity(1);
   });
 
   refs.salesDateFrom.addEventListener("change", (event) => {
