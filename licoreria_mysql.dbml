@@ -1,0 +1,87 @@
+Project LICORERIA {
+  database_type: "MySQL"
+  Note: "Esquema propuesto en MySQL basado en la logica actual de maqueta_visualizador."
+}
+
+Enum categoria_producto {
+  VINO
+  WHISKY
+  PISCO
+  VODKA
+  RON
+  TEQUILA
+  GIN
+  CERVEZA
+  READY_TO_DRINK
+  GASEOSAS
+  CIGARROS
+  SNACKS
+  OTROS
+}
+
+Table productos {
+  id int [pk, not null, note: "Corresponde a N° en CSV/API"]
+  nombre varchar(180) [not null]
+  categoria categoria_producto [not null, default: 'OTROS', note: "Categoria comercial del producto"]
+  precio decimal(10,2) [not null, default: 0]
+  pedido int [not null, default: 0]
+  stock_actual decimal(12,2) [not null, default: 0]
+
+  Note: "Reglas sugeridas: precio >= 0, pedido >= 0, stock_actual >= 0."
+
+  Indexes {
+    (nombre) [name: "idx_productos_nombre"]
+    (categoria) [name: "idx_productos_categoria"]
+    (pedido) [name: "idx_productos_pedido"]
+  }
+}
+
+Table ventas_diarias {
+  id_venta int [pk, increment, not null]
+  fecha date [not null]
+  producto_id int [not null, ref: > productos.id]
+  nombre_snapshot varchar(180) [not null, note: "Nombre del producto al momento de la venta"]
+  cantidad decimal(12,2) [not null]
+  precio decimal(10,2) [not null]
+  total decimal(12,2) [not null]
+  tipo_pago varchar(20) [not null, default: "Efectivo", note: "A Ya Per | Efectivo | Pedido Ya | Rappi | EasyPay"]
+  origen varchar(20) [not null, default: "MANUAL", note: "MANUAL | MIGRACION_BASE"]
+
+  Note: "Reglas sugeridas: cantidad > 0, precio >= 0, total = cantidad * precio."
+
+  Indexes {
+    (fecha) [name: "idx_ventas_fecha"]
+    (producto_id) [name: "idx_ventas_producto"]
+    (tipo_pago) [name: "idx_ventas_tipo_pago"]
+  }
+}
+
+Table kardex_movimientos {
+  id_mov int [pk, increment, not null]
+  fecha_hora datetime [not null]
+  producto_id int [not null, ref: > productos.id]
+  nombre_snapshot varchar(180) [not null, note: "Nombre del producto al momento del movimiento"]
+  tipo varchar(10) [not null, note: "INGRESO | SALIDA"]
+  cantidad decimal(12,2) [not null]
+  stock_antes decimal(12,2) [not null]
+  stock_despues decimal(12,2) [not null]
+  referencia varchar(80)
+  nota varchar(255)
+
+  Note: "Reglas sugeridas: cantidad > 0, stock_antes >= 0, stock_despues >= 0."
+
+  Indexes {
+    (fecha_hora) [name: "idx_kardex_fecha_hora"]
+    (producto_id) [name: "idx_kardex_producto"]
+    (tipo) [name: "idx_kardex_tipo"]
+    (referencia) [name: "idx_kardex_referencia"]
+  }
+}
+
+Table configuracion_fuente_productos {
+  id tinyint [pk, not null, default: 1, note: "Mantener una sola fila: id = 1"]
+  active_csv_path varchar(512) [not null]
+  source_name varchar(255) [not null]
+  source_type varchar(20) [not null, note: "default | custom | uploaded"]
+  updated_at datetime [not null]
+}

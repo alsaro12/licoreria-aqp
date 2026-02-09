@@ -1,0 +1,46 @@
+{
+  "base_de_datos_esquema": {
+    "tablas": {
+      "Producto": {
+        "campos": {
+          "N°": "INTEGER",
+          "NOMBRE": "TEXT",
+          "PRECIO": "DECIMAL",
+          "PEDIDO": "INTEGER"
+        },
+        "clave_primaria": [
+          "N°"
+        ]
+      },
+      "StockMinimo": {
+        "campos": {
+          "N°": "INTEGER",
+          "STOCK MIN": "INTEGER"
+        },
+        "clave_primaria": [
+          "N°"
+        ],
+        "clave_foranea": {
+          "N°": "Producto.N°"
+        }
+      },
+      "MovimientoDiario": {
+        "campos": {
+          "FECHA": "DATE",
+          "N°": "INTEGER",
+          "INICIO": "INTEGER",
+          "VENTA DEL DIA": "INTEGER",
+          "CIERRE": "INTEGER",
+          "INGRESO": "INTEGER"
+        },
+        "clave_primaria": [
+          "FECHA",
+          "N°"
+        ],
+        "clave_foranea": {
+          "N°": "Producto.N°"
+        }
+      }
+    }
+  }
+}

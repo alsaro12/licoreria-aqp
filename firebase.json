@@ -1,0 +1,23 @@
+{
+  "hosting": {
+    "site": "licoreria-firebase-2026",
+    "public": "maqueta_visualizador",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "server.js",
+      "productos_db.js",
+      "backend/**",
+      ".env",
+      ".env.*"
+    ],
+    "cleanUrls": true,
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
