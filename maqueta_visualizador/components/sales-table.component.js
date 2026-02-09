@@ -6,7 +6,8 @@
       .map(
         (item) => `
       <tr>
-        <td>${esc(item.FECHA)}</td>
+        <td>${esc(item.FECHA_VENTA || "-")}</td>
+        <td>${esc(item.FECHA_OPERATIVA || "-")}</td>
         <td>${item["N°"]}</td>
         <td>${esc(item.NOMBRE)}</td>
         <td>${formatQty(item.CANTIDAD)}</td>

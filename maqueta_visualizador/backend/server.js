@@ -74,6 +74,36 @@ function normalizeIsoDateOnly(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
 }
 
+function extractIsoDateOnly(value) {
+  const text = trimValue(value ?? "");
+  if (!text) return null;
+  const head = text.replace("T", " ").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+}
+
+function normalizeSaleDateTimeInput(value) {
+  const text = trimValue(value ?? "");
+  if (!text) return null;
+  const normalized = text.replace("T", " ").replace(/\s+/g, " ");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return `${normalized} 20:00:00`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}$/.test(normalized)) {
+    return `${normalized}:00`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function defaultSaleDateTime() {
+  return `${todayIsoDate()} 20:00:00`;
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -697,9 +727,12 @@ function productRowToApi(row) {
 }
 
 function saleRowToApi(row) {
+  const saleDate = extractIsoDateOnly(row?.fecha_venta) || todayIsoDate();
+  const operativeDate = extractIsoDateOnly(row?.fecha_operativa) || "";
   return {
     ID_VENTA: toInt(row?.id_venta, 0),
-    FECHA: normalizeIsoDateOnly(row?.fecha) || todayIsoDate(),
+    FECHA_VENTA: saleDate,
+    FECHA_OPERATIVA: operativeDate,
     "N°": toInt(row?.producto_id, 0),
     NOMBRE: trimValue(row?.nombre_snapshot || ""),
     CANTIDAD: round2(row?.cantidad),
@@ -805,9 +838,9 @@ async function readProductsAll() {
 async function readSalesAll() {
   return withMysqlConnection(async (connection) => {
     const [rows] = await connection.query(
-      `SELECT id_venta, fecha, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
+      `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
        FROM ventas_diarias
-       ORDER BY fecha DESC, id_venta DESC`
+       ORDER BY fecha_venta DESC, id_venta DESC`
     );
     return (Array.isArray(rows) ? rows : []).map(saleRowToApi);
   });
@@ -1142,7 +1175,9 @@ async function registerSale(payload) {
     const quantity = parseNonNegativeNumber(payload.cantidad ?? payload.CANTIDAD, "cantidad");
     if (quantity <= 0) throw createHttpError(400, "La cantidad de venta debe ser mayor a 0.");
 
-    const fecha = normalizeIsoDateOnly(payload.fecha) || todayIsoDate();
+    const fechaVenta =
+      normalizeSaleDateTimeInput(payload.fecha_venta ?? payload.fechaVenta ?? payload.FECHA_VENTA) ||
+      defaultSaleDateTime();
     const tipoPago = normalizePaymentType(payload.tipoPago || payload.TIPO_PAGO || "Efectivo");
     const note = trimValue(payload.nota || payload.NOTA || "");
 
@@ -1175,10 +1210,33 @@ async function registerSale(payload) {
 
       const [saleResult] = await connection.query(
         `INSERT INTO ventas_diarias
-         (fecha, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen)
+         (fecha_venta, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [fecha, productId, truncateText(product.nombre, 180), quantity, price, total, tipoPago, "MANUAL"]
+        [fechaVenta, productId, truncateText(product.nombre, 180), quantity, price, total, tipoPago, "MANUAL"]
       );
+
+      const [savedSaleRows] = await connection.query(
+        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
+         FROM ventas_diarias
+         WHERE id_venta = ?
+         LIMIT 1`,
+        [toInt(saleResult?.insertId, 0)]
+      );
+      const savedSale =
+        Array.isArray(savedSaleRows) && savedSaleRows.length
+          ? savedSaleRows[0]
+          : {
+              id_venta: toInt(saleResult?.insertId, 0),
+              fecha_venta: fechaVenta,
+              fecha_operativa: fechaVenta,
+              producto_id: productId,
+              nombre_snapshot: product.nombre,
+              cantidad: quantity,
+              precio: price,
+              total,
+              tipo_pago: tipoPago,
+              origen: "MANUAL"
+            };
 
       const movement = await insertKardexMovement(connection, {
         productId,
@@ -1194,17 +1252,7 @@ async function registerSale(payload) {
       await connection.commit();
 
       return {
-        sale: {
-          ID_VENTA: toInt(saleResult?.insertId, 0),
-          FECHA: fecha,
-          "N°": productId,
-          NOMBRE: trimValue(product.nombre),
-          CANTIDAD: quantity,
-          PRECIO: price,
-          TOTAL: total,
-          TIPO_PAGO: tipoPago,
-          ORIGEN: "MANUAL"
-        },
+        sale: saleRowToApi(savedSale),
         product: {
           ...productRowToApi({ ...product, stock_actual: stockAfter }),
           CATEGORIA: trimValue(product.categoria || "OTROS") || "OTROS"
@@ -1229,13 +1277,15 @@ async function updateSale(idInput, payload) {
     const productId = parsePositiveInt(payload.productId ?? payload["N°"] ?? payload.productoId, "producto");
     const quantity = parseNonNegativeNumber(payload.cantidad ?? payload.CANTIDAD, "cantidad");
     if (quantity <= 0) throw createHttpError(400, "La cantidad de venta debe ser mayor a 0.");
-    const fecha = normalizeIsoDateOnly(payload.fecha) || todayIsoDate();
+    const fechaVenta =
+      normalizeSaleDateTimeInput(payload.fecha_venta ?? payload.fechaVenta ?? payload.FECHA_VENTA) ||
+      defaultSaleDateTime();
     const tipoPago = normalizePaymentType(payload.tipoPago || payload.TIPO_PAGO || "Efectivo");
 
     await connection.beginTransaction();
     try {
       const [saleRows] = await connection.query(
-        `SELECT id_venta, fecha, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
+        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
          FROM ventas_diarias
          WHERE id_venta = ? FOR UPDATE`,
         [saleId]
@@ -1315,10 +1365,10 @@ async function updateSale(idInput, payload) {
 
       await connection.query(
         `UPDATE ventas_diarias
-         SET fecha = ?, producto_id = ?, nombre_snapshot = ?, cantidad = ?, precio = ?, total = ?, tipo_pago = ?, origen = ?
+         SET fecha_venta = ?, producto_id = ?, nombre_snapshot = ?, cantidad = ?, precio = ?, total = ?, tipo_pago = ?, origen = ?
          WHERE id_venta = ?`,
         [
-          fecha,
+          fechaVenta,
           productId,
           truncateText(targetProduct.nombre, 180),
           quantity,
@@ -1330,20 +1380,33 @@ async function updateSale(idInput, payload) {
         ]
       );
 
+      const [updatedSaleRows] = await connection.query(
+        `SELECT id_venta, fecha_venta, fecha_operativa, producto_id, nombre_snapshot, cantidad, precio, total, tipo_pago, origen
+         FROM ventas_diarias
+         WHERE id_venta = ?
+         LIMIT 1`,
+        [saleId]
+      );
+      const updatedSale =
+        Array.isArray(updatedSaleRows) && updatedSaleRows.length
+          ? updatedSaleRows[0]
+          : {
+              id_venta: saleId,
+              fecha_venta: fechaVenta,
+              fecha_operativa: fechaVenta,
+              producto_id: productId,
+              nombre_snapshot: targetProduct.nombre,
+              cantidad: quantity,
+              precio: finalPrice,
+              total: finalTotal,
+              tipo_pago: tipoPago,
+              origen: trimValue(currentSale.origen || "MANUAL") || "MANUAL"
+            };
+
       await connection.commit();
 
       return {
-        sale: {
-          ID_VENTA: saleId,
-          FECHA: fecha,
-          "N°": productId,
-          NOMBRE: trimValue(targetProduct.nombre),
-          CANTIDAD: quantity,
-          PRECIO: finalPrice,
-          TOTAL: finalTotal,
-          TIPO_PAGO: tipoPago,
-          ORIGEN: trimValue(currentSale.origen || "MANUAL") || "MANUAL"
-        },
+        sale: saleRowToApi(updatedSale),
         product: {
           ...productRowToApi({ ...targetProduct, stock_actual: targetStockAfter }),
           CATEGORIA: trimValue(targetProduct.categoria || "OTROS") || "OTROS"
@@ -1493,11 +1556,11 @@ async function buildDailySalesExportCsv(connection, options = {}) {
 
     const [salesRows] = await connection.query(
       `
-        SELECT fecha, producto_id, SUM(cantidad) AS venta_dia
+        SELECT DATE(fecha_venta) AS fecha, producto_id, SUM(cantidad) AS venta_dia
         FROM ventas_diarias
-        WHERE fecha BETWEEN ? AND ?
+        WHERE DATE(fecha_venta) BETWEEN ? AND ?
           AND producto_id IN (${placeholders})
-        GROUP BY fecha, producto_id
+        GROUP BY DATE(fecha_venta), producto_id
       `,
       [from, to, ...productIds]
     );
@@ -1837,12 +1900,13 @@ async function handleVentasCollection(req, res, query) {
     const from = normalizeIsoDateOnly(query.get("from"));
     const to = normalizeIsoDateOnly(query.get("to"));
     const filtered = items.filter((item) => {
-      if (!matchDateRange(item.FECHA, from, to)) return false;
+      if (!matchDateRange(item.FECHA_VENTA, from, to)) return false;
       if (!term) return true;
       return (
         normalizeText(item.NOMBRE).includes(term) ||
         String(item["N°"]).includes(term) ||
-        String(item.FECHA).includes(term) ||
+        String(item.FECHA_VENTA || "").includes(term) ||
+        String(item.FECHA_OPERATIVA || "").includes(term) ||
         String(item.CANTIDAD).includes(term) ||
         normalizeText(item.TIPO_PAGO).includes(term)
       );
@@ -1850,10 +1914,11 @@ async function handleVentasCollection(req, res, query) {
     const sorted = sortItems(filtered, {
       sortBy: trimValue(query.get("sortBy") || ""),
       sortDir: query.get("sortDir"),
-      defaultSortBy: "FECHA",
+      defaultSortBy: "FECHA_VENTA",
       defaultSortDir: "desc",
       allowed: {
-        FECHA: (item) => normalizeIsoDateOnly(item.FECHA) || "",
+        FECHA_VENTA: (item) => normalizeIsoDateOnly(item.FECHA_VENTA) || "",
+        FECHA_OPERATIVA: (item) => normalizeIsoDateOnly(item.FECHA_OPERATIVA) || "",
         "N°": (item) => toInt(item["N°"], 0),
         NOMBRE: (item) => trimValue(item.NOMBRE || ""),
         CANTIDAD: (item) => toNumber(item.CANTIDAD, 0),
@@ -1881,7 +1946,7 @@ async function handleVentasCollection(req, res, query) {
     logInfo("Venta registrada", {
       productId: result.sale["N°"],
       cantidad: result.sale.CANTIDAD,
-      fecha: result.sale.FECHA,
+      fecha: result.sale.FECHA_VENTA,
       saleId: result.sale.ID_VENTA,
       kardexId: result?.movement?.ID_MOV || null
     });
@@ -1900,7 +1965,7 @@ async function handleVentasById(req, res, id) {
       saleId: result.sale.ID_VENTA,
       productId: result.sale["N°"],
       cantidad: result.sale.CANTIDAD,
-      fecha: result.sale.FECHA
+      fecha: result.sale.FECHA_VENTA
     });
     sendJson(res, 200, result);
     return;

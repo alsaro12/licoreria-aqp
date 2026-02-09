@@ -229,7 +229,7 @@
               </div>
               <label class="search-bar" for="salesSearch">
                 <span class="search-icon" aria-hidden="true">⌕</span>
-                <input id="salesSearch" type="search" placeholder="Buscar ventas por fecha, N° o nombre" />
+                <input id="salesSearch" type="search" placeholder="Buscar por fecha venta/operativa, N° o nombre" />
               </label>
             </div>
           </div>
@@ -242,8 +242,13 @@
             <thead>
               <tr>
                 <th class="sort-head">
-                  <button class="sort-btn" type="button" data-sort-table="sales" data-sort-key="FECHA">
-                    FECHA <span class="sort-indicator" aria-hidden="true">↕</span>
+                  <button class="sort-btn" type="button" data-sort-table="sales" data-sort-key="FECHA_VENTA">
+                    FECHA VENTA <span class="sort-indicator" aria-hidden="true">↕</span>
+                  </button>
+                </th>
+                <th class="sort-head">
+                  <button class="sort-btn" type="button" data-sort-table="sales" data-sort-key="FECHA_OPERATIVA">
+                    FECHA OPERATIVA <span class="sort-indicator" aria-hidden="true">↕</span>
                   </button>
                 </th>
                 <th class="sort-head">

@@ -9,7 +9,8 @@
 
     return (
       String(item["N°"] ?? "").includes(term) ||
-      String(item.FECHA ?? "").includes(term) ||
+      String(item.FECHA_VENTA ?? "").includes(term) ||
+      String(item.FECHA_OPERATIVA ?? "").includes(term) ||
       String(item.CANTIDAD ?? "").includes(term) ||
       normalizeText(item.TIPO_PAGO ?? "").includes(norm) ||
       normalizeText(item.NOMBRE ?? "").includes(norm)
@@ -26,7 +27,7 @@
     state.filteredSales = state.sales.filter(
       (item) =>
         matchSale(item, state.salesSearch) &&
-        matchDateRange(item.FECHA, state.salesDateFrom, state.salesDateTo)
+        matchDateRange(item.FECHA_VENTA, state.salesDateFrom, state.salesDateTo)
     );
 
     const paged = paginate(state.filteredSales, state.salesPagination.page, state.salesPagination.pageSize);
@@ -38,7 +39,7 @@
     const rows = state.pagedSales || [];
     refs.salesBody.innerHTML = rows.length
       ? renderSalesRows(rows)
-      : '<tr><td class="empty" colspan="9">No hay ventas para este filtro.</td></tr>';
+      : '<tr><td class="empty" colspan="10">No hay ventas para este filtro.</td></tr>';
   }
 
   function renderSalesPager(refs, state) {
@@ -142,7 +143,7 @@
       resetSaleForm();
       state.saleEditingId = saleId;
       setSaleDialogMode("edit");
-      refs.saleFecha.value = normalizeDateValue(sale.FECHA) || todayInputValue();
+      refs.saleFecha.value = normalizeDateValue(sale.FECHA_VENTA) || todayInputValue();
       setSaleQuantityValue(sale.CANTIDAD, { fallback: 1 });
       refs.saleTipoPago.value = normalizePaymentType(sale.TIPO_PAGO);
       refs.saleNota.value = "";
@@ -228,7 +229,7 @@
         const payload = {
           productId: Number.parseInt(refs.saleProductId.value, 10),
           cantidad,
-          fecha: refs.saleFecha.value || todayInputValue(),
+          fecha_venta: refs.saleFecha.value || todayInputValue(),
           tipoPago,
           nota: refs.saleNota.value.trim()
         };
@@ -256,7 +257,7 @@
           {
             product: label,
             cantidad: formatQty(payload.cantidad),
-            fecha: payload.fecha,
+            fecha: payload.fecha_venta,
             tipoPago,
             total: computedTotal
           },
@@ -355,7 +356,7 @@
       if (!from || !to) {
         const source = state.filteredSales.length ? state.filteredSales : state.sales;
         const dates = source
-          .map((item) => normalizeDateValue(item.FECHA))
+          .map((item) => normalizeDateValue(item.FECHA_VENTA))
           .filter((value) => Boolean(value))
           .sort((a, b) => a.localeCompare(b));
         if (!from) from = dates[0] || todayInputValue();
