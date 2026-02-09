@@ -1561,7 +1561,7 @@ async function handleIngressSubmit(event) {
 
   try {
     const quantity = parseNumberInput(refs.ingressCantidad.value, {
-      min: 0.01,
+      min: 1,
       label: "cantidad de ingreso"
     });
     const payload = {
