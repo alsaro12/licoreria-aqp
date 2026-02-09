@@ -15,6 +15,9 @@ const API_BASE_STORAGE_KEY = "licoreria.api_base_url";
 const MOBILE_KPI_EXPANDED_STORAGE_KEY = "licoreria.mobile_kpi_expanded";
 const FALLBACK_API_BASE_URL = "https://api.escon.pe";
 const PAYMENT_TYPES = ["A Ya Per", "Efectivo", "Pedido Ya", "Rappi", "EasyPay"];
+const APP_VERSION = "1.0.0";
+
+window.APP_VERSION = APP_VERSION;
 
 const state = {
   activeView: "sales",
@@ -72,6 +75,7 @@ const refs = {
   kpiCollapsible: document.getElementById("kpiCollapsible"),
   reloadBtn: document.getElementById("reloadBtn"),
   appMessage: document.getElementById("appMessage"),
+  appVersionLabel: document.getElementById("appVersionLabel"),
   kpiProducts: document.getElementById("kpiProducts"),
   kpiSalesRangeAmount: document.getElementById("kpiSalesRangeAmount"),
   kpiSales: document.getElementById("kpiSales"),
@@ -2304,6 +2308,10 @@ function bindEvents() {
 }
 
 async function init() {
+  if (refs.appVersionLabel) {
+    refs.appVersionLabel.textContent = `Version ${APP_VERSION}`;
+  }
+
   state.apiBaseUrl = loadApiBaseUrlPreference();
   state.mobileKpiExpanded = loadMobileKpiExpandedPreference();
   bindEvents();

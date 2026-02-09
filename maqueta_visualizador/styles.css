@@ -105,6 +105,13 @@ h1 {
   font-size: 1.02rem;
 }
 
+.hero-version {
+  margin: 0.42rem 0 0;
+  color: #365068;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .btn {
   border: 0;
   background: linear-gradient(130deg, var(--brand), #0d9388);
