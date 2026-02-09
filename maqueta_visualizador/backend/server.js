@@ -47,6 +47,7 @@ const DB_STATUS_ENV_KEYS = [
   "DB_STATUS_CHARSET"
 ];
 const PAYMENT_TYPES = ["A Ya Per", "Efectivo", "Pedido Ya", "Rappi", "EasyPay"];
+const PRODUCT_STATUSES = ["ACTIVO", "INACTIVO"];
 
 function createHttpError(status, message) {
   const error = new Error(message);
@@ -172,6 +173,13 @@ function normalizeKardexType(value) {
   const normalized = normalizeText(value);
   if (normalized === "ingreso") return "INGRESO";
   if (normalized === "salida") return "SALIDA";
+  return null;
+}
+
+function normalizeProductStatus(value) {
+  const normalized = trimValue(value || "").toUpperCase();
+  if (!normalized) return null;
+  if (PRODUCT_STATUSES.includes(normalized)) return normalized;
   return null;
 }
 
@@ -676,13 +684,15 @@ async function serveStatic(req, res, requestPath) {
 }
 
 function productRowToApi(row) {
+  const status = normalizeProductStatus(row?.estado) || "ACTIVO";
   return {
     "N°": toInt(row?.id, 0),
     NOMBRE: trimValue(row?.nombre || ""),
     CATEGORIA: trimValue(row?.categoria || "OTROS"),
     PRECIO: round2(row?.precio),
     PEDIDO: Math.max(0, toInt(row?.pedido, 0)),
-    STOCK_ACTUAL: round2(Math.max(0, toNumber(row?.stock_actual, 0)))
+    STOCK_ACTUAL: round2(Math.max(0, toNumber(row?.stock_actual, 0))),
+    ESTADO: status
   };
 }
 
@@ -786,7 +796,7 @@ async function insertKardexMovement(connection, payload) {
 async function readProductsAll() {
   return withMysqlConnection(async (connection) => {
     const [rows] = await connection.query(
-      "SELECT id, nombre, categoria, precio, pedido, stock_actual FROM productos ORDER BY id ASC"
+      "SELECT id, nombre, categoria, precio, pedido, stock_actual, estado FROM productos ORDER BY id ASC"
     );
     return (Array.isArray(rows) ? rows : []).map(productRowToApi);
   });
@@ -819,6 +829,54 @@ async function readKardexAll() {
   });
 }
 
+async function deleteKardexMovement(idInput) {
+  const movementId = parsePositiveInt(idInput, "ID_MOV");
+  return withMysqlConnection(async (connection) => {
+    try {
+      const [rows] = await connection.query(
+        `SELECT id_mov, fecha_hora, producto_id, nombre_snapshot, tipo, cantidad, stock_antes, stock_despues, referencia, nota
+         FROM kardex_movimientos
+         WHERE id_mov = ?
+         LIMIT 1`,
+        [movementId]
+      );
+      const current = Array.isArray(rows) && rows.length ? rows[0] : null;
+      if (!current) throw createHttpError(404, `No existe movimiento kardex #${movementId}.`);
+
+      await connection.query("DELETE FROM kardex_movimientos WHERE id_mov = ?", [movementId]);
+      return kardexRowToApi(current);
+    } catch (error) {
+      if (error?.code === "ER_NO_SUCH_TABLE") {
+        throw createHttpError(404, `No existe movimiento kardex #${movementId}.`);
+      }
+      throw error;
+    }
+  });
+}
+
+async function deleteAllKardexMovements() {
+  return withMysqlConnection(async (connection) => {
+    try {
+      const [countRows] = await connection.query("SELECT COUNT(*) AS total FROM kardex_movimientos");
+      const total = toInt(countRows?.[0]?.total, 0);
+      await connection.query("DELETE FROM kardex_movimientos");
+
+      try {
+        await connection.query("ALTER TABLE kardex_movimientos AUTO_INCREMENT = 1");
+      } catch {
+        // Ignora error de reinicio de autoincrement en motores no compatibles.
+      }
+
+      return { deletedCount: total };
+    } catch (error) {
+      if (error?.code === "ER_NO_SUCH_TABLE") {
+        return { deletedCount: 0 };
+      }
+      throw error;
+    }
+  });
+}
+
 async function getProductStats() {
   const products = await readProductsAll();
   return {
@@ -841,6 +899,11 @@ async function createProduct(payload) {
       payload.STOCK_ACTUAL ?? payload.stockActual ?? payload.stock_actual ?? payload.stock ?? 0,
       "STOCK_ACTUAL"
     );
+    const statusInput = payload.ESTADO ?? payload.estado ?? payload.status;
+    const status = statusInput === undefined ? "ACTIVO" : normalizeProductStatus(statusInput);
+    if (!status) {
+      throw createHttpError(400, "ESTADO invalido. Usa ACTIVO o INACTIVO.");
+    }
 
     let id;
     if (hasCustomId) {
@@ -858,8 +921,8 @@ async function createProduct(payload) {
     await connection.beginTransaction();
     try {
       await connection.query(
-        "INSERT INTO productos (id, nombre, precio, pedido, stock_actual) VALUES (?, ?, ?, ?, ?)",
-        [id, name, price, Math.max(0, pedido), stock]
+        "INSERT INTO productos (id, nombre, precio, pedido, stock_actual, estado) VALUES (?, ?, ?, ?, ?, ?)",
+        [id, name, price, Math.max(0, pedido), stock, status]
       );
 
       let movement = null;
@@ -885,6 +948,7 @@ async function createProduct(payload) {
         PRECIO: price,
         PEDIDO: Math.max(0, pedido),
         STOCK_ACTUAL: stock,
+        ESTADO: status,
         MOVIMIENTO: movement
       };
     } catch (error) {
@@ -904,7 +968,7 @@ async function updateProduct(idInput, payload) {
     await connection.beginTransaction();
     try {
       const [rows] = await connection.query(
-        "SELECT id, nombre, categoria, precio, pedido, stock_actual FROM productos WHERE id = ? FOR UPDATE",
+        "SELECT id, nombre, categoria, precio, pedido, stock_actual, estado FROM productos WHERE id = ? FOR UPDATE",
         [id]
       );
       const current = Array.isArray(rows) && rows.length ? rows[0] : null;
@@ -924,6 +988,15 @@ async function updateProduct(idInput, payload) {
       const pedidoRaw = payload.PEDIDO ?? payload.pedido ?? current.pedido;
       const pedido = toInt(pedidoRaw, 0);
       if (pedido < 0) throw createHttpError(400, "El campo PEDIDO no puede ser negativo.");
+      let status = normalizeProductStatus(current.estado) || "ACTIVO";
+      const statusInput = payload.ESTADO ?? payload.estado ?? payload.status;
+      if (statusInput !== undefined) {
+        const nextStatus = normalizeProductStatus(statusInput);
+        if (!nextStatus) {
+          throw createHttpError(400, "ESTADO invalido. Usa ACTIVO o INACTIVO.");
+        }
+        status = nextStatus;
+      }
 
       let stockBase =
         payload.STOCK_ACTUAL !== undefined || payload.stock_actual !== undefined
@@ -946,8 +1019,8 @@ async function updateProduct(idInput, payload) {
       if (stockBase < 0) throw createHttpError(400, "STOCK_ACTUAL no puede ser negativo.");
 
       await connection.query(
-        "UPDATE productos SET nombre = ?, precio = ?, pedido = ?, stock_actual = ? WHERE id = ?",
-        [name, price, Math.max(0, pedido), stockBase, id]
+        "UPDATE productos SET nombre = ?, precio = ?, pedido = ?, stock_actual = ?, estado = ? WHERE id = ?",
+        [name, price, Math.max(0, pedido), stockBase, status, id]
       );
 
       let movement = null;
@@ -974,6 +1047,7 @@ async function updateProduct(idInput, payload) {
         PRECIO: price,
         PEDIDO: Math.max(0, pedido),
         STOCK_ACTUAL: round2(stockBase),
+        ESTADO: status,
         MOVIMIENTO: movement
       };
     } catch (error) {
@@ -991,7 +1065,7 @@ async function deleteProduct(idInput) {
   const id = parsePositiveInt(idInput, "N°");
   return withMysqlConnection(async (connection) => {
     const [rows] = await connection.query(
-      "SELECT id, nombre, categoria, precio, pedido, stock_actual FROM productos WHERE id = ? LIMIT 1",
+      "SELECT id, nombre, categoria, precio, pedido, stock_actual, estado FROM productos WHERE id = ? LIMIT 1",
       [id]
     );
     const current = Array.isArray(rows) && rows.length ? rows[0] : null;
@@ -1025,7 +1099,7 @@ async function registerStockIngress(idInput, payload) {
     await connection.beginTransaction();
     try {
       const [rows] = await connection.query(
-        "SELECT id, nombre, categoria, precio, pedido, stock_actual FROM productos WHERE id = ? FOR UPDATE",
+        "SELECT id, nombre, categoria, precio, pedido, stock_actual, estado FROM productos WHERE id = ? FOR UPDATE",
         [id]
       );
       const current = Array.isArray(rows) && rows.length ? rows[0] : null;
@@ -1079,11 +1153,15 @@ async function registerSale(payload) {
     await connection.beginTransaction();
     try {
       const [productRows] = await connection.query(
-        "SELECT id, nombre, categoria, precio, pedido, stock_actual FROM productos WHERE id = ? FOR UPDATE",
+        "SELECT id, nombre, categoria, precio, pedido, stock_actual, estado FROM productos WHERE id = ? FOR UPDATE",
         [productId]
       );
       const product = Array.isArray(productRows) && productRows.length ? productRows[0] : null;
       if (!product) throw createHttpError(404, `No existe producto con N° ${productId}.`);
+      const productStatus = normalizeProductStatus(product.estado) || "ACTIVO";
+      if (productStatus !== "ACTIVO") {
+        throw createHttpError(409, `No puedes vender N° ${productId} porque está INACTIVO.`);
+      }
 
       const stockBefore = round2(product.stock_actual);
       if (stockBefore < quantity) {
@@ -1173,7 +1251,7 @@ async function updateSale(idInput, payload) {
       const currentQuantity = round2(currentSale.cantidad);
 
       const [currentProductRows] = await connection.query(
-        "SELECT id, nombre, categoria, precio, pedido, stock_actual FROM productos WHERE id = ? FOR UPDATE",
+        "SELECT id, nombre, categoria, precio, pedido, stock_actual, estado FROM productos WHERE id = ? FOR UPDATE",
         [currentProductId]
       );
       const currentProduct = Array.isArray(currentProductRows) && currentProductRows.length ? currentProductRows[0] : null;
@@ -1202,11 +1280,15 @@ async function updateSale(idInput, payload) {
       let targetProduct = currentProduct;
       if (productId !== currentProductId) {
         const [targetProductRows] = await connection.query(
-          "SELECT id, nombre, categoria, precio, pedido, stock_actual FROM productos WHERE id = ? FOR UPDATE",
+          "SELECT id, nombre, categoria, precio, pedido, stock_actual, estado FROM productos WHERE id = ? FOR UPDATE",
           [productId]
         );
         targetProduct = Array.isArray(targetProductRows) && targetProductRows.length ? targetProductRows[0] : null;
         if (!targetProduct) throw createHttpError(404, `No existe producto destino N° ${productId}.`);
+      }
+      const targetStatus = normalizeProductStatus(targetProduct.estado) || "ACTIVO";
+      if (targetStatus !== "ACTIVO" && productId !== currentProductId) {
+        throw createHttpError(409, `No puedes usar N° ${productId} en ventas porque está INACTIVO.`);
       }
 
       const targetStockBefore = round2(targetProduct.stock_actual);
@@ -1665,6 +1747,7 @@ async function handleProductsCollection(req, res, query) {
     const items = await readProductsAll();
     const term = normalizeText(query.get("q"));
     const pedidoFilter = normalizeText(query.get("pedido") || "todos");
+    const statusFilter = normalizeText(query.get("estado") || "todos");
     const filtered = items.filter((item) => {
       const matchesTerm =
         !term ||
@@ -1673,13 +1756,19 @@ async function handleProductsCollection(req, res, query) {
         String(item["N°"]).includes(term) ||
         String(item.PRECIO).includes(term) ||
         String(item.PEDIDO).includes(term) ||
-        String(item.STOCK_ACTUAL).includes(term);
+        String(item.STOCK_ACTUAL).includes(term) ||
+        normalizeText(item.ESTADO).includes(term);
       const pedido = toNumber(item.PEDIDO, 0);
       const matchesPedido =
         pedidoFilter === "todos" ||
         (pedidoFilter === "con-pedido" && pedido > 0) ||
         (pedidoFilter === "sin-pedido" && pedido <= 0);
-      return matchesTerm && matchesPedido;
+      const status = normalizeText(item.ESTADO || "ACTIVO");
+      const matchesStatus =
+        statusFilter === "todos" ||
+        (statusFilter === "activo" && status === "activo") ||
+        (statusFilter === "inactivo" && status === "inactivo");
+      return matchesTerm && matchesPedido && matchesStatus;
     });
     const sorted = sortItems(filtered, {
       sortBy: trimValue(query.get("sortBy") || ""),
@@ -1692,7 +1781,8 @@ async function handleProductsCollection(req, res, query) {
         CATEGORIA: (item) => trimValue(item.CATEGORIA || ""),
         PRECIO: (item) => toNumber(item.PRECIO, 0),
         PEDIDO: (item) => toNumber(item.PEDIDO, 0),
-        STOCK_ACTUAL: (item) => toNumber(item.STOCK_ACTUAL, 0)
+        STOCK_ACTUAL: (item) => toNumber(item.STOCK_ACTUAL, 0),
+        ESTADO: (item) => trimValue(item.ESTADO || "ACTIVO")
       }
     });
     sendJson(
@@ -1824,6 +1914,18 @@ async function handleVentasById(req, res, id) {
 }
 
 async function handleKardexCollection(req, res, query) {
+  if (req.method === "DELETE") {
+    const result = await deleteAllKardexMovements();
+    logInfo("Kardex reiniciado (eliminacion masiva)", {
+      deletedCount: result.deletedCount
+    });
+    sendJson(res, 200, {
+      ok: true,
+      deletedCount: result.deletedCount
+    });
+    return;
+  }
+
   if (req.method !== "GET") {
     sendText(res, 405, "Metodo no permitido.");
     return;
@@ -1876,6 +1978,16 @@ async function handleKardexCollection(req, res, query) {
   );
 }
 
+async function handleKardexById(req, res, id) {
+  if (req.method === "DELETE") {
+    const item = await deleteKardexMovement(id);
+    sendJson(res, 200, item);
+    return;
+  }
+
+  sendText(res, 405, "Metodo no permitido.");
+}
+
 const API_OBJECT_ROUTE_HANDLERS = [
   createVentasObjectServer({
     sendText,
@@ -1909,7 +2021,8 @@ const API_OBJECT_ROUTE_HANDLERS = [
     sendText,
     sendJson,
     readKardexAll,
-    handleKardexCollection
+    handleKardexCollection,
+    handleKardexById
   })
 ];
 

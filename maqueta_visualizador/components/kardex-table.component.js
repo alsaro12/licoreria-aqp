@@ -14,6 +14,11 @@
         <td>${formatQty(item.STOCK_ANTES)}</td>
         <td>${formatQty(item.STOCK_DESPUES)}</td>
         <td>${esc(item.REFERENCIA || "-")}</td>
+        <td>
+          <button class="action-btn delete" data-action="delete-kardex" data-id="${item.ID_MOV}" type="button">
+            Eliminar
+          </button>
+        </td>
       </tr>
     `
       )

@@ -16,6 +16,17 @@ const MOBILE_KPI_EXPANDED_STORAGE_KEY = "licoreria.mobile_kpi_expanded";
 const FALLBACK_API_BASE_URL = "https://licoreria.escon.pe/";
 const PAYMENT_TYPES = ["A Ya Per", "Efectivo", "Pedido Ya", "Rappi", "EasyPay"];
 const APP_VERSION = "1.0.2";
+const {
+  esc,
+  money,
+  formatQty,
+  formatDateTime,
+  normalizeText,
+  normalizeNumericText,
+  normalizeDateValue,
+  matchDateRange,
+  paginate
+} = window.AppCustomFunctions;
 
 window.APP_VERSION = APP_VERSION;
 
@@ -58,7 +69,8 @@ const state = {
   ingressProductId: null,
   mobileNavExpanded: false,
   mobileKpiExpanded: false,
-  migrationPollTimeoutId: null
+  migrationPollTimeoutId: null,
+  confirmDialogResolver: null
 };
 
 const refs = {
@@ -98,6 +110,12 @@ const refs = {
   ingressMessage: document.getElementById("ingressMessage"),
   ingressSubmitBtn: document.getElementById("ingressSubmitBtn"),
   ingressCancelBtn: document.getElementById("ingressCancelBtn"),
+  confirmDialog: document.getElementById("confirmDialog"),
+  confirmDialogTitle: document.getElementById("confirmDialogTitle"),
+  confirmDialogMessage: document.getElementById("confirmDialogMessage"),
+  confirmDialogCloseBtn: document.getElementById("confirmDialogCloseBtn"),
+  confirmDialogCancelBtn: document.getElementById("confirmDialogCancelBtn"),
+  confirmDialogConfirmBtn: document.getElementById("confirmDialogConfirmBtn"),
   crudSearch: document.getElementById("crudSearch"),
   crudMessage: document.getElementById("crudMessage"),
   productForm: document.getElementById("productForm"),
@@ -108,6 +126,7 @@ const refs = {
   crudPedido: document.getElementById("crudPedido"),
   crudStockActual: document.getElementById("crudStockActual"),
   crudStockAjuste: document.getElementById("crudStockAjuste"),
+  crudEstado: document.getElementById("crudEstado"),
   crudNota: document.getElementById("crudNota"),
   crudSaveBtn: document.getElementById("crudSaveBtn"),
   crudCancelBtn: document.getElementById("crudCancelBtn"),
@@ -157,6 +176,7 @@ const refs = {
   salesPageInfo: document.getElementById("salesPageInfo"),
   kardexSearch: document.getElementById("kardexSearch"),
   kardexTypeFilter: document.getElementById("kardexTypeFilter"),
+  kardexDeleteAllBtn: document.getElementById("kardexDeleteAllBtn"),
   kardexBody: document.getElementById("kardexBody"),
   sortButtons: Array.from(document.querySelectorAll("[data-sort-table][data-sort-key]")),
   apiSettingsForm: document.getElementById("apiSettingsForm"),
@@ -178,38 +198,102 @@ const refs = {
   viewPanels: Array.from(document.querySelectorAll("[data-view-panel]"))
 };
 
-function esc(text) {
-  return String(text ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+let productsController = null;
+let salesController = null;
+let kardexController = null;
+let settingsController = null;
 
-function money(value) {
-  return new Intl.NumberFormat("es-PE", {
-    style: "currency",
-    currency: "PEN"
-  }).format(Number(value || 0));
-}
+function initControllers() {
+  if (!productsController) {
+    productsController = window.ProductsPage.createController({
+      state,
+      refs,
+      apiRequest,
+      parseNumberInput,
+      formatQty,
+      getApiBaseUrl,
+      setCrudMessage,
+      setIngressMessage,
+      openConfirmDialog,
+      refreshAll,
+      renderSortButtons,
+      buildCollectionQuery,
+      defaultPagination: () => ({ ...DEFAULT_PAGINATION })
+    });
+  }
 
-function formatQty(value) {
-  const number = Number(value || 0);
-  return Number.isInteger(number) ? String(number) : number.toFixed(2).replace(/\.00$/, "");
+  if (!salesController) {
+    salesController = window.SalesPage.createController({
+      state,
+      refs,
+      apiRequest,
+      buildCollectionQuery,
+      buildApiUrl,
+      normalizePaymentType,
+      normalizeSaleQuantityValue,
+      todayInputValue,
+      syncSaleProductIdFromLookup,
+      getSaleProductsSource,
+      setSaleDialogMode,
+      showSaleConfirmBox,
+      hideSaleConfirmBox,
+      setSaleMessage,
+      setSaleQuantityValue,
+      renderSaleProductOptions,
+      updateSaleTotalsPreview,
+      closeSaleLookupDropdown,
+      formatSaleLookupLabel,
+      normalizeDateValue,
+      round2,
+      money,
+      formatQty,
+      refreshAll,
+      renderSortButtons,
+      renderKpis,
+      defaultSalesPagination: () => ({ ...DEFAULT_SALES_PAGINATION })
+    });
+  }
+
+  if (!kardexController) {
+    kardexController = window.KardexPage.createController({
+      state,
+      refs,
+      apiRequest,
+      buildCollectionQuery,
+      setAppMessage,
+      openConfirmDialog,
+      refreshAll,
+      renderSortButtons,
+      renderKpis
+    });
+  }
+
+  if (!settingsController) {
+    settingsController = window.SettingsPage.createController({
+      state,
+      refs,
+      apiRequest,
+      normalizeApiBaseUrl,
+      buildApiUrlWithBase,
+      getApiBaseUrl,
+      saveApiBaseUrlPreference,
+      renderApiSettingsBound: renderApiSettings,
+      renderDbStatusBound: renderDbStatus,
+      renderAccessHostBound: renderAccessHost,
+      setSettingsMessage,
+      setAppMessage,
+      setCpanelProbeResult,
+      tryParseJsonText,
+      extractMysqlDeniedHost,
+      detectBrowserPublicIpv4,
+      copyTextToClipboard,
+      getRuntimeOrigin
+    });
+  }
 }
 
 function round2(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
-}
-
-function formatDateTime(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return new Intl.DateTimeFormat("es-PE", {
-    dateStyle: "short",
-    timeStyle: "medium"
-  }).format(date);
 }
 
 function todayInputValue() {
@@ -340,10 +424,6 @@ function isPrivateIpv4(ip) {
   return false;
 }
 
-function hasOwnField(value, fieldName) {
-  return Boolean(value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, fieldName));
-}
-
 async function detectBrowserPublicIpv4() {
   const probes = [
     {
@@ -415,7 +495,11 @@ async function copyTextToClipboard(text) {
 }
 
 function getSaleProductsSource() {
-  return state.productCatalog.length ? state.productCatalog : state.products;
+  const source = state.productCatalog.length ? state.productCatalog : state.products;
+  return source.filter((item) => {
+    const status = String(item?.ESTADO || "ACTIVO").trim().toUpperCase();
+    return status !== "INACTIVO";
+  });
 }
 
 function buildCollectionQuery(params = {}) {
@@ -469,18 +553,6 @@ function debounce(fn, delay = 200) {
   };
 }
 
-function normalizeText(value) {
-  return String(value ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-}
-
-function normalizeNumericText(value) {
-  return String(value ?? "").replace(",", ".").trim();
-}
-
 function normalizePaymentType(value) {
   const input = normalizeText(value);
   const found = PAYMENT_TYPES.find((type) => normalizeText(type) === input);
@@ -499,124 +571,6 @@ function parseNumberInput(raw, { min = null, max = null, label = "numero" } = {}
     throw new Error(`El campo ${label} debe ser <= ${max}.`);
   }
   return value;
-}
-
-function matchProduct(product, rawTerm) {
-  const term = String(rawTerm ?? "").trim();
-  if (!term) return true;
-
-  const termNorm = normalizeText(term);
-  const termNum = normalizeNumericText(term);
-
-  const idText = String(product["N°"] ?? "");
-  const nameText = normalizeText(product.NOMBRE ?? "");
-  const categoryText = normalizeText(product.CATEGORIA ?? "");
-  const pedidoText = String(product.PEDIDO ?? "");
-  const stockText = String(product.STOCK_ACTUAL ?? "");
-
-  const price = Number(product.PRECIO ?? 0);
-  const priceRaw = String(product.PRECIO ?? "");
-  const priceShort = String(price);
-  const priceFixed = Number.isFinite(price) ? price.toFixed(2) : "";
-  const priceComma = priceFixed.replace(".", ",");
-  const priceCandidates = [priceRaw, priceShort, priceFixed, priceComma, stockText];
-
-  const matchesText =
-    idText.includes(term) ||
-    pedidoText.includes(term) ||
-    stockText.includes(term) ||
-    categoryText.includes(termNorm) ||
-    nameText.includes(termNorm);
-
-  if (matchesText) return true;
-
-  return priceCandidates.some((candidate) => {
-    const candidateText = String(candidate);
-    return (
-      candidateText.includes(term) ||
-      normalizeNumericText(candidateText).includes(termNum)
-    );
-  });
-}
-
-function matchSale(item, rawTerm) {
-  const term = String(rawTerm ?? "").trim();
-  if (!term) return true;
-  const norm = normalizeText(term);
-
-  return (
-    String(item["N°"] ?? "").includes(term) ||
-    String(item.FECHA ?? "").includes(term) ||
-    String(item.CANTIDAD ?? "").includes(term) ||
-    normalizeText(item.TIPO_PAGO ?? "").includes(norm) ||
-    normalizeText(item.NOMBRE ?? "").includes(norm)
-  );
-}
-
-function normalizeDateValue(value) {
-  const text = String(value ?? "").trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
-}
-
-function matchDateRange(rawDate, fromDate, toDate) {
-  const from = normalizeDateValue(fromDate);
-  const to = normalizeDateValue(toDate);
-  if (!from && !to) return true;
-
-  const dateText = String(rawDate ?? "").trim().slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
-    if (from && dateText < from) return false;
-    if (to && dateText > to) return false;
-    return true;
-  }
-
-  const parsed = new Date(rawDate);
-  if (Number.isNaN(parsed.getTime())) return false;
-
-  const normalized = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 10);
-
-  if (from && normalized < from) return false;
-  if (to && normalized > to) return false;
-  return true;
-}
-
-function matchKardex(item, rawTerm, typeFilter) {
-  const typeOk = !typeFilter || typeFilter === "TODOS" || item.TIPO === typeFilter;
-  if (!typeOk) return false;
-
-  const term = String(rawTerm ?? "").trim();
-  if (!term) return true;
-
-  const norm = normalizeText(term);
-  return (
-    String(item["N°"] ?? "").includes(term) ||
-    String(item.FECHA_HORA ?? "").includes(term) ||
-    normalizeText(item.NOMBRE ?? "").includes(norm) ||
-    normalizeText(item.REFERENCIA ?? "").includes(norm) ||
-    normalizeText(item.NOTA ?? "").includes(norm)
-  );
-}
-
-function paginate(items, page, pageSize) {
-  const safePageSize = Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 10;
-  const totalItems = items.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / safePageSize));
-  const safePage = Math.min(Math.max(Number(page) || 1, 1), totalPages);
-  const start = (safePage - 1) * safePageSize;
-
-  return {
-    items: items.slice(start, start + safePageSize),
-    pagination: {
-      page: safePage,
-      pageSize: safePageSize,
-      totalItems,
-      totalPages,
-      hasPrev: safePage > 1,
-      hasNext: safePage < totalPages
-    }
-  };
 }
 
 async function apiRequest(path, options = {}) {
@@ -788,19 +742,10 @@ function renderDbStatus() {
 }
 
 function buildAccessHostRenderState() {
-  const fallback = state.accessHost && typeof state.accessHost === "object" ? { ...state.accessHost } : {};
-  const deniedHost = extractMysqlDeniedHost(state.dbStatus?.error || "");
-  if (!deniedHost) return fallback;
-
-  return {
-    ...fallback,
-    host: deniedHost,
-    source: "mysql_access_denied",
-    sourceLabel: "Detectado desde rechazo MySQL (más preciso)",
-    checkedAt: state.dbStatus?.checkedAt || fallback.checkedAt || new Date().toISOString(),
-    message: "Usa este host para autorizar acceso remoto en cPanel.",
-    fallbackHost: fallback.host && fallback.host !== deniedHost ? fallback.host : ""
-  };
+  if (!settingsController) {
+    return state.accessHost && typeof state.accessHost === "object" ? { ...state.accessHost } : {};
+  }
+  return settingsController.buildAccessHostRenderState();
 }
 
 function renderAccessHost() {
@@ -808,152 +753,74 @@ function renderAccessHost() {
 }
 
 async function refreshDbStatus() {
-  let success = false;
-  try {
-    const result = await apiRequest("/api/db/status");
-    if (!hasOwnField(result, "checked")) {
-      throw new Error(`La URL API actual (${getApiBaseUrl()}) no expone /api/db/status.`);
-    }
-    state.dbStatus = result;
-    success = true;
-  } catch (error) {
-    state.dbStatus = {
-      checked: true,
-      checkedAt: new Date().toISOString(),
-      configured: false,
-      connected: false,
-      method: "none",
-      host: null,
-      port: null,
-      database: null,
-      user: null,
-      charset: "utf8mb4",
-      missingKeys: [],
-      probeMs: 0,
-      message: "No se pudo consultar estado de DB.",
-      error: String(error?.message || "Error de conexión con API.")
-    };
-  }
-  renderDbStatus();
-  renderAccessHost();
-  return success;
+  return settingsController.refreshDbStatus();
 }
 
 async function refreshAccessHost() {
-  let success = false;
-  try {
-    const result = await apiRequest("/api/db/access-host");
-    if (!hasOwnField(result, "host")) {
-      throw new Error(`La URL API actual (${getApiBaseUrl()}) no expone /api/db/access-host.`);
-    }
-    state.accessHost = result;
-    success = true;
-  } catch (error) {
-    const deniedHost = extractMysqlDeniedHost(state.dbStatus?.error || "");
-    if (deniedHost) {
-      state.accessHost = {
-        checkedAt: new Date().toISOString(),
-        host: deniedHost,
-        source: "mysql_access_denied",
-        sourceLabel: "Detectado desde rechazo MySQL",
-        publicHost: null,
-        dbDeniedHost: deniedHost,
-        localHost: null,
-        canWhitelist: true,
-        message: "Host detectado desde Access denied de MySQL. Úsalo en cPanel > Remote MySQL.",
-        error: String(error?.message || "No se pudo usar endpoint backend.")
-      };
-      success = true;
-    } else {
-      const browserFallback = await detectBrowserPublicIpv4();
-      if (browserFallback?.ip) {
-        state.accessHost = {
-          checkedAt: new Date().toISOString(),
-          host: browserFallback.ip,
-          source: "browser_public_ipv4",
-          sourceLabel: `IP publica detectada desde navegador (${browserFallback.source})`,
-          publicHost: browserFallback.ip,
-          dbDeniedHost: null,
-          localHost: null,
-          canWhitelist: true,
-          message:
-            "Fallback sin API backend. Usa este host en cPanel si el backend corre en este mismo equipo.",
-          error: String(error?.message || "No se pudo usar endpoint backend.")
-        };
-        success = true;
-      } else {
-        state.accessHost = {
-          checkedAt: new Date().toISOString(),
-          host: null,
-          source: "error",
-          sourceLabel: "No disponible",
-          message:
-            "No se pudo detectar automaticamente. Verifica la URL API o detecta la IP publica manualmente.",
-          error: String(error?.message || "Error de conexión con API.")
-        };
-      }
-    }
-  }
-  renderAccessHost();
-  return success;
+  return settingsController.refreshAccessHost();
 }
 
 function clearCrudForm() {
-  state.editingId = null;
-  refs.crudEditId.value = "";
-  refs.crudId.value = "";
-  refs.crudId.disabled = false;
-  refs.crudNombre.value = "";
-  refs.crudPrecio.value = "";
-  refs.crudPedido.value = "0";
-  refs.crudStockActual.value = "0";
-  refs.crudStockActual.disabled = false;
-  refs.crudStockAjuste.value = "0";
-  refs.crudStockAjuste.disabled = true;
-  refs.crudNota.value = "";
-  refs.crudSaveBtn.textContent = "Guardar producto";
-  refs.productDialogTitle.textContent = "Crear producto";
+  productsController.clearCrudForm();
 }
 
 function openDialog() {
-  if (refs.productDialog.open) return;
-  refs.productDialog.showModal();
+  productsController.openDialog();
 }
 
 function closeDialog() {
-  if (!refs.productDialog.open) return;
-  refs.productDialog.close();
+  productsController.closeDialog();
 }
 
 function resetIngressForm() {
-  state.ingressProductId = null;
-  refs.ingressProductId.value = "";
-  refs.ingressProductLabel.value = "";
-  refs.ingressCurrentStock.value = "-";
-  refs.ingressCantidad.value = "1";
-  refs.ingressNota.value = "Ingreso manual desde gestion";
-  refs.ingressSubmitBtn.disabled = false;
-  setIngressMessage("");
+  productsController.resetIngressForm();
 }
 
 function openIngressDialogForProduct(product) {
-  if (!product) return;
-  resetIngressForm();
-  state.ingressProductId = Number(product["N°"]);
-  refs.ingressProductId.value = String(product["N°"]);
-  refs.ingressProductLabel.value = `${product["N°"]} - ${product.NOMBRE}`;
-  refs.ingressCurrentStock.value = formatQty(product.STOCK_ACTUAL);
-
-  if (!refs.ingressDialog.open) {
-    refs.ingressDialog.showModal();
-  }
-  refs.ingressCantidad.focus();
-  refs.ingressCantidad.select();
+  productsController.openIngressDialogForProduct(product);
 }
 
 function closeIngressDialog() {
-  if (!refs.ingressDialog.open) return;
-  refs.ingressDialog.close();
+  productsController.closeIngressDialog();
+}
+
+function resolveConfirmDialog(decision) {
+  const resolver = state.confirmDialogResolver;
+  state.confirmDialogResolver = null;
+  if (typeof resolver === "function") {
+    resolver(Boolean(decision));
+  }
+}
+
+function closeConfirmDialog(decision = false) {
+  resolveConfirmDialog(decision);
+  if (refs.confirmDialog?.open) {
+    refs.confirmDialog.close();
+  }
+}
+
+function openConfirmDialog(options = {}) {
+  const title = String(options.title || "Confirmar accion");
+  const message = String(options.message || "Esta accion no se puede deshacer.");
+  const cancelText = String(options.cancelText || "Cancelar");
+  const confirmText = String(options.confirmText || "Confirmar");
+
+  if (!refs.confirmDialog) {
+    return Promise.resolve(false);
+  }
+
+  closeConfirmDialog(false);
+  refs.confirmDialogTitle.textContent = title;
+  refs.confirmDialogMessage.textContent = message;
+  refs.confirmDialogCancelBtn.textContent = cancelText;
+  refs.confirmDialogConfirmBtn.textContent = confirmText;
+
+  refs.confirmDialog.showModal();
+  refs.confirmDialogConfirmBtn.focus();
+
+  return new Promise((resolve) => {
+    state.confirmDialogResolver = resolve;
+  });
 }
 
 function setSaleFormLocked(locked) {
@@ -1055,121 +922,27 @@ function hideSaleConfirmBox({ clear = true } = {}) {
 }
 
 function resetSaleForm() {
-  state.saleEditingId = null;
-  hideSaleConfirmBox({ clear: true });
-  refs.saleProductLookup.value = "";
-  refs.saleProductId.value = "";
-  state.saleLookupResults = [];
-  state.saleLookupOpen = false;
-  state.saleLookupHighlight = -1;
-  setSaleQuantityValue(1);
-  refs.salePrecioPreview.value = "-";
-  refs.saleTotalPreview.value = "-";
-  refs.saleTipoPago.value = "Efectivo";
-  refs.saleNota.value = "";
-  refs.saleFecha.value = refs.saleFecha.value || todayInputValue();
-  setSaleDialogMode("create");
-  renderSaleProductOptions();
-  updateSaleTotalsPreview();
+  salesController.resetSaleForm();
 }
 
 function openSaleDialog() {
-  if (!state.apiConnected) {
-    setSaleMessage(
-      `No hay conexión con ${getApiBaseUrl()}. Corrige la URL en Settings o inicia ese servidor.`,
-      "is-error"
-    );
-    return;
-  }
-  if (!getSaleProductsSource().length) {
-    setSaleMessage("No hay productos disponibles para registrar ventas.", "is-error");
-    return;
-  }
-  if (refs.saleDialog.open) return;
-  resetSaleForm();
-  refs.saleDialog.showModal();
-  refs.saleProductLookup.focus();
+  salesController.openSaleDialog();
 }
 
 function openEditSaleDialog(saleIdInput) {
-  const saleId = Number.parseInt(String(saleIdInput ?? ""), 10);
-  if (!saleId) return;
-  if (!state.apiConnected) {
-    setSaleMessage("No hay conexión con el servidor.", "is-error");
-    return;
-  }
-  const sale = state.sales.find((item) => Number(item.ID_VENTA) === saleId);
-  if (!sale) {
-    setSaleMessage(`No se encontró la venta #${saleId}.`, "is-error");
-    return;
-  }
-  const products = getSaleProductsSource();
-  if (!products.length) {
-    setSaleMessage("No hay productos disponibles para editar la venta.", "is-error");
-    return;
-  }
-
-  resetSaleForm();
-  state.saleEditingId = saleId;
-  setSaleDialogMode("edit");
-  refs.saleFecha.value = normalizeDateValue(sale.FECHA) || todayInputValue();
-  setSaleQuantityValue(sale.CANTIDAD, { fallback: 1 });
-  refs.saleTipoPago.value = normalizePaymentType(sale.TIPO_PAGO);
-  refs.saleNota.value = "";
-  renderSaleProductOptions();
-
-  const saleProductId = Number.parseInt(String(sale["N°"] ?? ""), 10);
-  const saleProduct = products.find((item) => Number(item["N°"]) === saleProductId);
-  if (saleProduct) {
-    refs.saleProductLookup.value = formatSaleLookupLabel(saleProduct);
-    refs.saleProductId.value = String(saleProduct["N°"]);
-  } else {
-    setSaleMessage(
-      "El producto original de esta venta ya no existe. Selecciona otro para corregirla.",
-      "is-error"
-    );
-  }
-
-  if (!refs.saleDialog.open) {
-    refs.saleDialog.showModal();
-  }
-  setSaleMessage(`Editando venta #${saleId}.`);
-  updateSaleTotalsPreview();
+  salesController.openEditSaleDialog(saleIdInput);
 }
 
 function closeSaleDialog() {
-  if (!refs.saleDialog.open) return;
-  refs.saleDialog.close();
-  hideSaleConfirmBox({ clear: true });
-  closeSaleLookupDropdown();
+  salesController.closeSaleDialog();
 }
 
 function openCreateDialog() {
-  clearCrudForm();
-  refs.productDialogTitle.textContent = "Crear producto";
-  openDialog();
+  productsController.openCreateDialog();
 }
 
 function openEditDialog(id) {
-  const item = state.products.find((row) => Number(row["N°"]) === Number(id));
-  if (!item) return;
-
-  state.editingId = Number(item["N°"]);
-  refs.crudEditId.value = String(item["N°"]);
-  refs.crudId.value = String(item["N°"]);
-  refs.crudId.disabled = true;
-  refs.crudNombre.value = String(item.NOMBRE || "");
-  refs.crudPrecio.value = String(item.PRECIO || 0);
-  refs.crudPedido.value = String(item.PEDIDO || 0);
-  refs.crudStockActual.value = String(item.STOCK_ACTUAL || 0);
-  refs.crudStockActual.disabled = true;
-  refs.crudStockAjuste.value = "0";
-  refs.crudStockAjuste.disabled = false;
-  refs.crudNota.value = "";
-  refs.crudSaveBtn.textContent = `Actualizar N° ${item["N°"]}`;
-  refs.productDialogTitle.textContent = `Editar producto N° ${item["N°"]}`;
-  setCrudMessage(`Editando producto N° ${item["N°"]}`, "is-success");
-  openDialog();
+  productsController.openEditDialog(id);
 }
 
 function applyProductFilterAndPagination() {
@@ -1185,69 +958,27 @@ function applyKardexFilter() {
 }
 
 async function loadProducts() {
-  const query = buildCollectionQuery({
-    q: state.crudSearch,
-    page: state.pagination.page,
-    pageSize: state.pagination.pageSize,
-    sortBy: state.productSort.key,
-    sortDir: state.productSort.dir
-  });
-  const response = await apiRequest(`/api/productos?${query}`);
-  const items = Array.isArray(response?.items) ? response.items : [];
-  state.products = items;
-  state.filteredProducts = items;
-  state.pagedProducts = items;
-  state.pagination = response?.pagination || { ...DEFAULT_PAGINATION };
+  return productsController.loadProducts();
 }
 
 async function loadSales() {
-  const query = buildCollectionQuery({
-    q: state.salesSearch,
-    from: state.salesDateFrom,
-    to: state.salesDateTo,
-    page: state.salesPagination.page,
-    pageSize: state.salesPagination.pageSize,
-    sortBy: state.salesSort.key,
-    sortDir: state.salesSort.dir
-  });
-  const response = await apiRequest(`/api/ventas?${query}`);
-  const items = Array.isArray(response?.items) ? response.items : [];
-  state.sales = items;
-  state.filteredSales = items;
-  state.pagedSales = items;
-  state.salesPagination = response?.pagination || { ...DEFAULT_SALES_PAGINATION };
+  return salesController.loadSales();
 }
 
 async function loadKardex() {
-  const query = buildCollectionQuery({
-    q: state.kardexSearch,
-    tipo: state.kardexType,
-    page: 1,
-    pageSize: 5000,
-    sortBy: state.kardexSort.key,
-    sortDir: state.kardexSort.dir
-  });
-  const response = await apiRequest(`/api/kardex?${query}`);
-  const items = Array.isArray(response?.items) ? response.items : [];
-  state.kardex = items;
-  state.filteredKardex = items;
+  return kardexController.loadKardex();
 }
 
 async function loadProductCatalog() {
-  const items = await apiRequest("/api/productos/all");
-  state.productCatalog = Array.isArray(items)
-    ? [...items].sort((a, b) => Number(a["N°"] || 0) - Number(b["N°"] || 0))
-    : [];
+  return productsController.loadProductCatalog();
 }
 
 async function loadSalesAllForKpi() {
-  const items = await apiRequest("/api/ventas/all");
-  state.salesAll = Array.isArray(items) ? items : [];
+  return salesController.loadSalesAllForKpi();
 }
 
 async function loadKardexAllForKpi() {
-  const items = await apiRequest("/api/kardex/all");
-  state.kardexAll = Array.isArray(items) ? items : [];
+  return kardexController.loadKardexAllForKpi();
 }
 
 function renderApiSettings() {
@@ -1618,559 +1349,83 @@ async function refreshAll({ keepMessages = false } = {}) {
 }
 
 async function refreshLocalProducts() {
-  try {
-    await loadProducts();
-    state.apiConnected = true;
-    renderCrudTable();
-    renderPager();
-    renderSortButtons();
-  } catch (error) {
-    state.apiConnected = false;
-    setCrudMessage(error.message, "is-error");
-  }
+  return productsController.refreshLocalProducts();
 }
 
 async function refreshLocalSales() {
-  try {
-    await loadSales();
-    state.apiConnected = true;
-    renderSalesTable();
-    renderSalesPager();
-    renderKpis();
-    renderSortButtons();
-  } catch (error) {
-    state.apiConnected = false;
-    setSaleMessage(error.message, "is-error");
-  }
+  return salesController.refreshLocalSales();
 }
 
 async function refreshLocalKardex() {
-  try {
-    await loadKardex();
-    state.apiConnected = true;
-    renderKardexTable();
-    renderSortButtons();
-    renderKpis();
-  } catch (error) {
-    state.apiConnected = false;
-    setAppMessage(error.message, "is-error");
-  }
+  return kardexController.refreshLocalKardex();
 }
 
 async function handleCrudSubmit(event) {
-  event.preventDefault();
-
-  try {
-    const payload = {
-      NOMBRE: refs.crudNombre.value.trim(),
-      PRECIO: parseNumberInput(refs.crudPrecio.value, { min: 0, label: "PRECIO" }),
-      PEDIDO: Number.parseInt(refs.crudPedido.value || "0", 10)
-    };
-
-    if (!payload.NOMBRE) {
-      throw new Error("El campo NOMBRE es obligatorio.");
-    }
-
-    if (!state.editingId && refs.crudId.value.trim()) {
-      payload["N°"] = Number.parseInt(refs.crudId.value.trim(), 10);
-    }
-
-    if (state.editingId) {
-      payload.stockAjuste = parseNumberInput(refs.crudStockAjuste.value || "0", {
-        label: "AJUSTE STOCK"
-      });
-      if (refs.crudNota.value.trim()) {
-        payload.nota = refs.crudNota.value.trim();
-      }
-
-      await apiRequest(`/api/productos/${state.editingId}`, {
-        method: "PUT",
-        body: JSON.stringify(payload)
-      });
-      setCrudMessage(`Producto N° ${state.editingId} actualizado.`, "is-success");
-    } else {
-      payload.STOCK_ACTUAL = parseNumberInput(refs.crudStockActual.value || "0", {
-        min: 0,
-        label: "STOCK ACTUAL"
-      });
-
-      const created = await apiRequest("/api/productos", {
-        method: "POST",
-        body: JSON.stringify(payload)
-      });
-      setCrudMessage(`Producto N° ${created["N°"]} creado.`, "is-success");
-    }
-
-    closeDialog();
-    clearCrudForm();
-    await refreshAll({ keepMessages: true });
-  } catch (error) {
-    state.apiConnected = false;
-    setCrudMessage(error.message, "is-error");
-  }
+  return productsController.handleCrudSubmit(event);
 }
 
 async function handleDelete(id) {
-  const item = state.products.find((row) => Number(row["N°"]) === Number(id));
-  const ok = window.confirm(`Eliminar producto N° ${id}${item ? ` - ${item.NOMBRE}` : ""}?`);
-  if (!ok) return;
+  return productsController.handleDelete(id);
+}
 
-  try {
-    await apiRequest(`/api/productos/${id}`, { method: "DELETE" });
-    if (state.editingId === Number(id)) {
-      closeDialog();
-      clearCrudForm();
-    }
-    setCrudMessage(`Producto N° ${id} eliminado.`, "is-success");
-    await refreshAll({ keepMessages: true });
-  } catch (error) {
-    state.apiConnected = false;
-    setCrudMessage(error.message, "is-error");
-  }
+async function handleDeleteKardex(id) {
+  return kardexController.handleDeleteKardex(id);
+}
+
+async function handleDeleteAllKardex() {
+  return kardexController.handleDeleteAllKardex();
 }
 
 async function handleStockIngress(id) {
-  if (!state.apiConnected) {
-    setCrudMessage(
-      `No hay conexión con ${getApiBaseUrl()}. Corrige la URL en Settings o inicia ese servidor.`,
-      "is-error"
-    );
-    return;
-  }
-
-  const item = state.products.find((row) => Number(row["N°"]) === Number(id));
-  if (!item) {
-    setCrudMessage(`No se encontró el producto N° ${id}.`, "is-error");
-    return;
-  }
-  openIngressDialogForProduct(item);
+  return productsController.handleStockIngress(id);
 }
 
 async function handleIngressSubmit(event) {
-  event.preventDefault();
-
-  const productId =
-    state.ingressProductId || Number.parseInt(String(refs.ingressProductId.value || ""), 10);
-  if (!productId) {
-    setIngressMessage("No se encontró el producto para el ingreso.", "is-error");
-    return;
-  }
-
-  try {
-    const quantity = parseNumberInput(refs.ingressCantidad.value, {
-      min: 1,
-      label: "cantidad de ingreso"
-    });
-    const payload = {
-      cantidad: quantity,
-      nota: refs.ingressNota.value.trim(),
-      referencia: "INGRESO_MANUAL_UI"
-    };
-
-    refs.ingressSubmitBtn.disabled = true;
-    const result = await apiRequest(`/api/productos/${productId}/ingreso`, {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-
-    const stockAfter = Number(result?.product?.STOCK_ACTUAL ?? 0);
-    closeIngressDialog();
-    resetIngressForm();
-    setCrudMessage(
-      `Ingreso aplicado a N° ${productId}: +${formatQty(quantity)}. Stock actual: ${formatQty(stockAfter)}.`,
-      "is-success"
-    );
-    await refreshAll({ keepMessages: true });
-  } catch (error) {
-    const rawMessage = String(error?.message || "No se pudo registrar el ingreso.");
-    if (/No se pudo conectar al servidor configurado/i.test(rawMessage)) {
-      state.apiConnected = false;
-    }
-    refs.ingressSubmitBtn.disabled = false;
-    setIngressMessage(rawMessage, "is-error");
-  }
+  return productsController.handleIngressSubmit(event);
 }
 
 async function handleSaleSubmit(event) {
-  event.preventDefault();
-  if (!state.apiConnected) {
-    setSaleMessage("No hay conexión con el servidor.", "is-error");
-    return;
-  }
-
-  try {
-    syncSaleProductIdFromLookup();
-    const tipoPago = normalizePaymentType(refs.saleTipoPago.value);
-    const cantidad = normalizeSaleQuantityValue(refs.saleCantidad.value);
-    if (!Number.isInteger(cantidad) || cantidad < 1) {
-      throw new Error("La cantidad debe ser un numero entero mayor o igual a 1.");
-    }
-    const payload = {
-      productId: Number.parseInt(refs.saleProductId.value, 10),
-      cantidad,
-      fecha: refs.saleFecha.value || todayInputValue(),
-      tipoPago,
-      nota: refs.saleNota.value.trim()
-    };
-
-    if (!payload.productId) {
-      throw new Error("Selecciona un producto para la venta.");
-    }
-
-    const selectedProduct = getSaleProductsSource().find(
-      (item) => Number(item["N°"]) === payload.productId
-    );
-    const label = selectedProduct
-      ? `${selectedProduct["N°"]} - ${selectedProduct.NOMBRE}`
-      : `N° ${payload.productId}`;
-    const computedTotal = selectedProduct
-      ? money(round2(Number(selectedProduct.PRECIO || 0) * payload.cantidad))
-      : refs.saleTotalPreview.value;
-    const isEditing = Number.isInteger(state.saleEditingId) && state.saleEditingId > 0;
-    if (isEditing) {
-      setSaleDialogMode("edit");
-    } else {
-      setSaleDialogMode("create");
-    }
-    showSaleConfirmBox(
-      {
-        product: label,
-        cantidad: formatQty(payload.cantidad),
-        fecha: payload.fecha,
-        tipoPago,
-        total: computedTotal
-      },
-      payload,
-      {
-        isEditing,
-        saleId: state.saleEditingId
-      }
-    );
-    setSaleMessage(
-      isEditing
-        ? "Revisa el resumen y confirma para actualizar la venta."
-        : "Revisa el resumen y confirma para guardar la venta."
-    );
-  } catch (error) {
-    const rawMessage = String(error?.message || "");
-    if (/No se pudo conectar al servidor configurado/i.test(rawMessage)) {
-      state.apiConnected = false;
-    }
-    setSaleMessage(rawMessage || "No se pudo preparar la venta.", "is-error");
-  }
+  return salesController.handleSaleSubmit(event);
 }
 
 function handleSaleConfirmBack() {
-  hideSaleConfirmBox({ clear: true });
-  setSaleMessage("Ajusta los campos y vuelve a confirmar.");
+  salesController.handleSaleConfirmBack();
 }
 
 async function handleSaleConfirmSubmit() {
-  const pending = state.salePendingConfirm;
-  if (!pending?.payload) return;
-
-  try {
-    let result;
-    if (pending.isEditing && pending.saleId) {
-      result = await apiRequest(`/api/ventas/${pending.saleId}`, {
-        method: "PUT",
-        body: JSON.stringify(pending.payload)
-      });
-      setSaleMessage(
-        `Venta #${result.sale.ID_VENTA} actualizada: N° ${result.sale["N°"]}, cantidad ${formatQty(result.sale.CANTIDAD)}, pago ${result.sale.TIPO_PAGO || "Efectivo"}.`,
-        "is-success"
-      );
-    } else {
-      result = await apiRequest("/api/ventas", {
-        method: "POST",
-        body: JSON.stringify(pending.payload)
-      });
-      setSaleMessage(
-        `Venta registrada: N° ${result.sale["N°"]}, cantidad ${formatQty(result.sale.CANTIDAD)}, pago ${result.sale.TIPO_PAGO || "Efectivo"}.`,
-        "is-success"
-      );
-    }
-
-    resetSaleForm();
-    closeSaleDialog();
-
-    await refreshAll({ keepMessages: true });
-  } catch (error) {
-    const rawMessage = String(error?.message || "");
-    if (/No se pudo conectar al servidor configurado/i.test(rawMessage)) {
-      state.apiConnected = false;
-    }
-    const staleServerHint =
-      pending.isEditing && /No encontrado\.?|Error 404/i.test(rawMessage)
-        ? `${rawMessage} Si acabas de actualizar código, reinicia el servidor para habilitar edición de ventas.`
-        : rawMessage;
-    setSaleMessage(staleServerHint || "No se pudo guardar la venta.", "is-error");
-  }
-}
-
-async function tryConnectWithCurrentApiBase() {
-  await refreshAll({ keepMessages: true });
+  return salesController.handleSaleConfirmSubmit();
 }
 
 async function handleApiBaseSave(event) {
-  event.preventDefault();
-
-  try {
-    const normalized = normalizeApiBaseUrl(refs.apiBaseUrlInput.value);
-    if (!normalized) {
-      throw new Error("Ingresa una URL de servidor.");
-    }
-
-    state.apiBaseUrl = normalized;
-    saveApiBaseUrlPreference(normalized);
-    renderApiSettings();
-    setSettingsMessage(`Servidor guardado: ${normalized}`, "is-success");
-    setAppMessage(`Servidor API activo: ${normalized}`, "is-success");
-
-    await tryConnectWithCurrentApiBase();
-    setSettingsMessage(`Conexión OK con ${normalized}`, "is-success", { autoClearMs: 2500 });
-  } catch (error) {
-    state.apiConnected = false;
-    setSettingsMessage(error.message, "is-error");
-    setAppMessage(error.message, "is-error");
-  }
+  return settingsController.handleApiBaseSave(event, refreshAll);
 }
 
 async function handleApiBaseTest() {
-  try {
-    const draft = normalizeApiBaseUrl(refs.apiBaseUrlInput.value);
-    if (!draft) {
-      throw new Error("Ingresa una URL para probar.");
-    }
-
-    const testUrl = buildApiUrlWithBase("/api/db/status", draft);
-    let response;
-    try {
-      response = await fetch(testUrl);
-    } catch {
-      throw new Error(`No se pudo conectar con ${draft}.`);
-    }
-
-    if (!response.ok) {
-      throw new Error(`Servidor respondió ${response.status} al probar ${draft}.`);
-    }
-
-    const raw = await response.text();
-    const data = raw ? JSON.parse(raw) : {};
-
-    if (typeof data?.connected === "boolean") {
-      if (!data.connected) {
-        throw new Error(`DB sin conexión: ${data.error || "sin detalle"}`);
-      }
-      setSettingsMessage(`Conexión OK con ${draft} (DB conectada).`, "is-success", { autoClearMs: 3000 });
-      return;
-    }
-
-    if (typeof data?.checked === "boolean" && typeof data?.connected === "boolean") {
-      if (!data.connected) {
-        throw new Error(`DB sin conexión: ${data.error || data.message || "sin detalle"}`);
-      }
-      setSettingsMessage(`Conexión OK con ${draft} (DB conectada).`, "is-success", { autoClearMs: 3000 });
-      return;
-    }
-
-    setSettingsMessage(`Conexión HTTP OK con ${draft}.`, "is-success", { autoClearMs: 3000 });
-  } catch (error) {
-    setSettingsMessage(error.message, "is-error");
-  }
+  return settingsController.handleApiBaseTest();
 }
 
 async function handleCpanelDbStatusTest() {
-  const previousText = refs.testCpanelDbBtn.textContent;
-  refs.testCpanelDbBtn.disabled = true;
-  refs.testCpanelDbBtn.textContent = "Probando...";
-
-  try {
-    const draft = normalizeApiBaseUrl(refs.apiBaseUrlInput.value);
-    if (!draft) {
-      throw new Error("Ingresa una URL para probar.");
-    }
-
-    const testUrl = buildApiUrlWithBase("/api/db/status", draft);
-    setCpanelProbeResult({ state: "loading", url: testUrl });
-    let response;
-    try {
-      response = await fetch(testUrl, { cache: "no-store" });
-    } catch {
-      throw new Error(`No se pudo conectar con ${draft}.`);
-    }
-
-    const rawBody = await response.text();
-    const jsonBody = tryParseJsonText(rawBody);
-    const payload = jsonBody ?? rawBody;
-
-    if (!response.ok) {
-      setCpanelProbeResult({
-        state: "error",
-        url: testUrl,
-        httpStatus: response.status,
-        payload,
-        error: `Servidor respondió ${response.status} al consultar /api/db/status.`
-      });
-      throw new Error(`Servidor respondió ${response.status} al consultar /api/db/status.`);
-    }
-
-    if (!jsonBody || typeof jsonBody.connected !== "boolean") {
-      setCpanelProbeResult({
-        state: "error",
-        url: testUrl,
-        httpStatus: response.status,
-        payload,
-        error: "El endpoint /api/db/status no devolvió el campo booleano 'connected'."
-      });
-      throw new Error("El endpoint /api/db/status no devolvió el campo booleano 'connected'.");
-    }
-
-    if (jsonBody.connected) {
-      setCpanelProbeResult({
-        state: "ok",
-        url: testUrl,
-        httpStatus: response.status,
-        payload: jsonBody
-      });
-      setSettingsMessage(`DB cPanel conectada en ${draft}.`, "is-success", { autoClearMs: 3000 });
-    } else {
-      setCpanelProbeResult({
-        state: "error",
-        url: testUrl,
-        httpStatus: response.status,
-        payload: jsonBody,
-        error: `DB cPanel sin conexión: ${jsonBody.error || "sin detalle"}`
-      });
-      throw new Error(`DB cPanel sin conexión: ${jsonBody.error || "sin detalle"}`);
-    }
-  } catch (error) {
-    const text = String(error?.message || "Error de prueba.");
-    if (refs.cpanelProbeBadge?.classList.contains("is-loading")) {
-      setCpanelProbeResult({
-        state: "error",
-        payload: null,
-        error: text
-      });
-    }
-    setSettingsMessage(error.message, "is-error");
-  } finally {
-    refs.testCpanelDbBtn.disabled = false;
-    refs.testCpanelDbBtn.textContent = previousText;
-  }
-}
-
-function extractFilenameFromContentDisposition(headerValue) {
-  const header = String(headerValue || "");
-  if (!header) return "";
-
-  const utfMatch = header.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
-  if (utfMatch?.[1]) {
-    try {
-      return decodeURIComponent(utfMatch[1]).trim();
-    } catch {
-      return utfMatch[1].trim();
-    }
-  }
-
-  const basicMatch = header.match(/filename\s*=\s*\"?([^\";]+)\"?/i);
-  return basicMatch?.[1] ? basicMatch[1].trim() : "";
+  return settingsController.handleCpanelDbStatusTest();
 }
 
 async function handleExportSalesCsv() {
-  if (!state.apiConnected) {
-    setSaleMessage(
-      `No hay conexión con ${getApiBaseUrl()}. Corrige la URL en Settings o inicia ese servidor.`,
-      "is-error"
-    );
-    return;
-  }
-
-  let from = state.salesDateFrom || "";
-  let to = state.salesDateTo || "";
-  if (!from || !to) {
-    const source = state.filteredSales.length ? state.filteredSales : state.sales;
-    const dates = source
-      .map((item) => normalizeDateValue(item.FECHA))
-      .filter((value) => Boolean(value))
-      .sort((a, b) => a.localeCompare(b));
-    if (!from) from = dates[0] || todayInputValue();
-    if (!to) to = dates[dates.length - 1] || from;
-  }
-  if (from && to && from > to) {
-    setSaleMessage("Rango inválido: la fecha Desde no puede ser mayor que Hasta.", "is-error");
-    return;
-  }
-
-  const params = new URLSearchParams();
-  params.set("from", from);
-  params.set("to", to);
-  params.set("format", "excelxml");
-  const search = String(state.salesSearch || "").trim();
-  if (search) params.set("q", search);
-
-  const defaultFileName = `ventas_diarias_resumen_${from}_a_${to}_color.xml`;
-  const previousText = refs.exportSalesCsvBtn.textContent;
-  refs.exportSalesCsvBtn.disabled = true;
-  refs.exportSalesCsvBtn.textContent = "Exportando reporte...";
-
-  try {
-    const response = await fetch(buildApiUrl(`/api/ventas/export/csv?${params.toString()}`));
-    if (!response.ok) {
-      let message = `Error ${response.status}`;
-      try {
-        const raw = await response.text();
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            message = parsed?.error || raw;
-          } catch {
-            message = raw;
-          }
-        }
-      } catch {
-        // Ignora fallos de lectura.
-      }
-      throw new Error(message);
-    }
-
-    const blob = await response.blob();
-    const disposition = response.headers.get("content-disposition");
-    const fileName = extractFilenameFromContentDisposition(disposition) || defaultFileName;
-
-    const objectUrl = window.URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 600);
-
-    setSaleMessage(`Reporte exportado (${from} a ${to}).`, "is-success");
-  } catch (error) {
-    const rawMessage = String(error?.message || "No se pudo exportar reporte.");
-    if (/No se pudo conectar|Failed to fetch|NetworkError/i.test(rawMessage)) {
-      state.apiConnected = false;
-    }
-    setSaleMessage(rawMessage, "is-error");
-  } finally {
-    refs.exportSalesCsvBtn.disabled = false;
-    refs.exportSalesCsvBtn.textContent = previousText;
-  }
+  return salesController.handleExportSalesCsv();
 }
 
 function handleUseCurrentOrigin() {
-  const origin = getRuntimeOrigin();
-  if (!origin) {
-    setSettingsMessage(
-      "Esta pestaña no tiene origen http/https. Abre la app desde un servidor web.",
-      "is-error"
-    );
-    return;
-  }
-  refs.apiBaseUrlInput.value = origin;
-  setSettingsMessage(`URL cargada desde la pestaña: ${origin}`, "is-success", { autoClearMs: 2200 });
+  settingsController.handleUseCurrentOrigin();
+}
+
+async function handleRefreshDbStatusClick() {
+  return settingsController.handleRefreshDbStatusClick();
+}
+
+async function handleRefreshAccessHostClick() {
+  return settingsController.handleRefreshAccessHostClick();
+}
+
+async function handleCopyAccessHost() {
+  return settingsController.handleCopyAccessHost();
 }
 
 function bindEvents() {
@@ -2217,6 +1472,7 @@ function bindEvents() {
     closeDialog();
     closeSaleDialog();
     closeIngressDialog();
+    closeConfirmDialog(false);
     resetIngressForm();
     clearCrudForm();
     setSettingsMessage("");
@@ -2257,6 +1513,15 @@ function bindEvents() {
     closeIngressDialog();
     resetIngressForm();
   });
+  refs.confirmDialogCloseBtn.addEventListener("click", () => {
+    closeConfirmDialog(false);
+  });
+  refs.confirmDialogCancelBtn.addEventListener("click", () => {
+    closeConfirmDialog(false);
+  });
+  refs.confirmDialogConfirmBtn.addEventListener("click", () => {
+    closeConfirmDialog(true);
+  });
 
   refs.productDialog.addEventListener("cancel", () => {
     clearCrudForm();
@@ -2267,53 +1532,20 @@ function bindEvents() {
   refs.ingressDialog.addEventListener("cancel", () => {
     resetIngressForm();
   });
+  refs.confirmDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeConfirmDialog(false);
+  });
+  refs.confirmDialog.addEventListener("close", () => {
+    resolveConfirmDialog(false);
+  });
   refs.apiSettingsForm.addEventListener("submit", handleApiBaseSave);
   refs.testApiBaseBtn.addEventListener("click", handleApiBaseTest);
   refs.testCpanelDbBtn.addEventListener("click", handleCpanelDbStatusTest);
   refs.useCurrentOriginBtn.addEventListener("click", handleUseCurrentOrigin);
-  refs.dbStatusRefreshBtn.addEventListener("click", async () => {
-    refs.dbStatusRefreshBtn.disabled = true;
-    try {
-      const ok = await refreshDbStatus();
-      if (ok) {
-        setSettingsMessage("Estado de DB actualizado.", "is-success", { autoClearMs: 1800 });
-      } else {
-        setSettingsMessage("No se pudo verificar la DB con la URL API actual.", "is-error");
-      }
-    } finally {
-      refs.dbStatusRefreshBtn.disabled = false;
-    }
-  });
-  refs.refreshAccessHostBtn.addEventListener("click", async () => {
-    refs.refreshAccessHostBtn.disabled = true;
-    try {
-      await refreshDbStatus();
-      const ok = await refreshAccessHost();
-      const effectiveHost = String(buildAccessHostRenderState()?.host || "").trim();
-      if (ok && effectiveHost) {
-        setSettingsMessage("Access Host actualizado.", "is-success", { autoClearMs: 2200 });
-      } else if (ok) {
-        setSettingsMessage("No se detectó Access Host con la API actual.", "is-error");
-      } else {
-        setSettingsMessage("No se pudo consultar Access Host con la URL API actual.", "is-error");
-      }
-    } finally {
-      refs.refreshAccessHostBtn.disabled = false;
-    }
-  });
-  refs.copyAccessHostBtn.addEventListener("click", async () => {
-    const host = String(refs.accessHostValue.value || "").trim();
-    if (!host || host === "-") {
-      setSettingsMessage("Primero detecta un Access Host valido.", "is-error", { autoClearMs: 2600 });
-      return;
-    }
-    try {
-      await copyTextToClipboard(host);
-      setSettingsMessage(`Access Host copiado: ${host}`, "is-success", { autoClearMs: 2400 });
-    } catch (error) {
-      setSettingsMessage(`No se pudo copiar: ${error.message}`, "is-error");
-    }
-  });
+  refs.dbStatusRefreshBtn.addEventListener("click", handleRefreshDbStatusClick);
+  refs.refreshAccessHostBtn.addEventListener("click", handleRefreshAccessHostClick);
+  refs.copyAccessHostBtn.addEventListener("click", handleCopyAccessHost);
 
   refs.crudSearch.addEventListener("input", (event) => {
     state.crudSearch = event.target.value;
@@ -2479,6 +1711,8 @@ function bindEvents() {
     refreshLocalKardex();
   });
 
+  refs.kardexDeleteAllBtn.addEventListener("click", handleDeleteAllKardex);
+
   refs.sortButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const tableName = String(button.dataset.sortTable || "");
@@ -2587,6 +1821,14 @@ function bindEvents() {
       handleDelete(id);
     }
   });
+
+  refs.kardexBody.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action='delete-kardex']");
+    if (!button) return;
+    const id = Number.parseInt(button.dataset.id, 10);
+    if (!id) return;
+    handleDeleteKardex(id);
+  });
 }
 
 async function init() {
@@ -2596,6 +1838,7 @@ async function init() {
 
   state.apiBaseUrl = loadApiBaseUrlPreference();
   state.mobileKpiExpanded = loadMobileKpiExpandedPreference();
+  initControllers();
   bindEvents();
   resetIngressForm();
   const today = todayInputValue();

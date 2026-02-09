@@ -3,7 +3,7 @@ function matchesPath(pathname, basePath) {
 }
 
 function createKardexObjectServer(deps) {
-  const { sendText, sendJson, readKardexAll, handleKardexCollection } = deps;
+  const { sendText, sendJson, readKardexAll, handleKardexCollection, handleKardexById } = deps;
 
   return async function handleKardexObjectRoute(req, res, pathname, query) {
     if (matchesPath(pathname, "/api/kardex")) {
@@ -18,6 +18,12 @@ function createKardexObjectServer(deps) {
       }
       const items = await readKardexAll();
       sendJson(res, 200, items);
+      return true;
+    }
+
+    const kardexMatch = pathname.match(/^\/api\/kardex\/(\d+)\/?$/);
+    if (kardexMatch) {
+      await handleKardexById(req, res, kardexMatch[1]);
       return true;
     }
 

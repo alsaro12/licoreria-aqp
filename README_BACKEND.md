@@ -26,6 +26,7 @@ Si quieres que tambien sirva estaticos desde Node:
 - `maqueta_visualizador/app.js`
 - `maqueta_visualizador/styles.css`
 - `maqueta_visualizador/components/**`
+- `maqueta_visualizador/functions/**`
 - `maqueta_visualizador/pages/**`
 
 No sincronizar por git:
@@ -101,3 +102,8 @@ echo "Listo: ahora pulsa Restart en Setup Node.js App o ejecuta el comando de re
 - Rotar credenciales que ya hayan estado en archivos versionados.
 - Separar credenciales de produccion vs pruebas.
 - Restringir permisos de llave SSH al usuario de deploy.
+
+## Nota de separacion Frontend/Backend
+- La carpeta `maqueta_visualizador/functions/**` es frontend (logica JS del navegador), no backend.
+- La carpeta `maqueta_visualizador/pages/**` ahora es adaptadora de frontend (no contiene la logica principal).
+- El backend real se mantiene en `maqueta_visualizador/backend/**` y su entrada de app en `maqueta_visualizador/server.js`.

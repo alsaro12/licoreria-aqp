@@ -12,6 +12,9 @@
         <td>${money(item.PRECIO)}</td>
         <td>${formatQty(item.PEDIDO)}</td>
         <td>${formatQty(item.STOCK_ACTUAL)}</td>
+        <td><span class="tag ${String(item.ESTADO || "ACTIVO") === "INACTIVO" ? "is-warn" : "is-ok"}">${esc(
+          String(item.ESTADO || "ACTIVO")
+        )}</span></td>
         <td>
           <button class="action-btn ingreso" data-action="ingreso" data-id="${item["N°"]}" type="button">Ingreso</button>
           <button class="action-btn edit" data-action="edit" data-id="${item["N°"]}" type="button">Editar</button>

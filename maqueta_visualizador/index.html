@@ -128,7 +128,7 @@
           <div class="table-toolbar">
             <label class="search-bar" for="crudSearch">
               <span class="search-icon" aria-hidden="true">⌕</span>
-              <input id="crudSearch" type="search" placeholder="Buscar por N°, nombre, categoría, precio o stock" />
+              <input id="crudSearch" type="search" placeholder="Buscar por N°, nombre, categoría, estado, precio o stock" />
             </label>
             <button id="openCreateBtn" class="btn" type="button">Crear producto</button>
           </div>
@@ -168,6 +168,11 @@
                 <th class="sort-head">
                   <button class="sort-btn" type="button" data-sort-table="products" data-sort-key="STOCK_ACTUAL">
                     STOCK <span class="sort-indicator" aria-hidden="true">↕</span>
+                  </button>
+                </th>
+                <th class="sort-head">
+                  <button class="sort-btn" type="button" data-sort-table="products" data-sort-key="ESTADO">
+                    ESTADO <span class="sort-indicator" aria-hidden="true">↕</span>
                   </button>
                 </th>
                 <th>ACCIONES</th>
@@ -317,6 +322,14 @@
               <option value="INGRESO">Ingreso</option>
               <option value="SALIDA">Salida</option>
             </select>
+            <button
+              id="kardexDeleteAllBtn"
+              class="btn btn-danger"
+              type="button"
+              title="Eliminar todos los movimientos de kardex (solo desarrollo)"
+            >
+              Eliminar todo kardex
+            </button>
           </div>
         </div>
 
@@ -364,6 +377,7 @@
                     REFERENCIA <span class="sort-indicator" aria-hidden="true">↕</span>
                   </button>
                 </th>
+                <th>ACCIONES</th>
               </tr>
             </thead>
             <tbody id="kardexBody"></tbody>
@@ -558,6 +572,13 @@
           AJUSTE STOCK (+/-)
           <input id="crudStockAjuste" type="number" step="0.01" value="0" />
         </label>
+        <label>
+          ESTADO
+          <select id="crudEstado">
+            <option value="ACTIVO" selected>ACTIVO</option>
+            <option value="INACTIVO">INACTIVO</option>
+          </select>
+        </label>
         <label class="full-row">
           Nota movimiento
           <input id="crudNota" type="text" maxlength="120" placeholder="Opcional para kardex" />
@@ -601,10 +622,30 @@
       </form>
     </dialog>
 
-    <script src="./custom-functions.js"></script>
+    <dialog id="confirmDialog" class="confirm-dialog">
+      <div class="dialog-head">
+        <h3 id="confirmDialogTitle">Confirmar accion</h3>
+        <button id="confirmDialogCloseBtn" class="dialog-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div class="confirm-dialog-body">
+        <p id="confirmDialogMessage" class="confirm-dialog-message">
+          Esta accion no se puede deshacer.
+        </p>
+        <div class="confirm-dialog-actions">
+          <button id="confirmDialogCancelBtn" class="btn btn-ghost" type="button">Cancelar</button>
+          <button id="confirmDialogConfirmBtn" class="btn btn-danger" type="button">Eliminar</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script src="./functions/custom-functions.js"></script>
     <script src="./components/product-table.component.js"></script>
     <script src="./components/sales-table.component.js"></script>
     <script src="./components/kardex-table.component.js"></script>
+    <script src="./functions/products-functions.js"></script>
+    <script src="./functions/sales-functions.js"></script>
+    <script src="./functions/kardex-functions.js"></script>
+    <script src="./functions/settings-functions.js"></script>
     <script src="./pages/products-page.js"></script>
     <script src="./pages/sales-page.js"></script>
     <script src="./pages/kardex-page.js"></script>

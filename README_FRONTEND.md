@@ -53,6 +53,7 @@ Si se despliega:
 - `maqueta_visualizador/app.js`
 - `maqueta_visualizador/styles.css`
 - `maqueta_visualizador/components/**`
+- `maqueta_visualizador/functions/**`
 - `maqueta_visualizador/pages/**`
 
 No se despliega (por `ignore`):
@@ -64,3 +65,15 @@ No se despliega (por `ignore`):
 
 ## Nota de arquitectura
 Firebase Hosting aqui se usa para frontend estatico. El backend Node.js se despliega aparte en tu servidor/cPanel (ver `/Users/alonsosantamaria/Desktop/LICORERIA/README_BACKEND.md`).
+
+## Estructura actual del frontend
+- `maqueta_visualizador/app.js`: orquestador principal (estado global, refs de DOM, eventos, flujo general).
+- `maqueta_visualizador/functions/custom-functions.js`: utilidades compartidas de frontend (`AppCustomFunctions`).
+- `maqueta_visualizador/functions/products-functions.js`: logica de productos (filtro, render, CRUD, ingreso, controller).
+- `maqueta_visualizador/functions/sales-functions.js`: logica de ventas (filtro, render, dialogos, confirmacion, export).
+- `maqueta_visualizador/functions/kardex-functions.js`: logica de kardex (filtro, render, delete, controller).
+- `maqueta_visualizador/functions/settings-functions.js`: logica de settings (API base, DB status, access host).
+- `maqueta_visualizador/pages/*.js`: capa adaptadora que expone `window.*Page` consumiendo `window.*Functions`.
+- `maqueta_visualizador/components/*.js`: render de tablas/componentes visuales.
+
+Resumen: la logica funcional del frontend ya no vive en `pages/`; ahora vive en `functions/`. `pages/` solo conecta esa logica con `app.js`.
