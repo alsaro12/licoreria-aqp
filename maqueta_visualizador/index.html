@@ -448,18 +448,27 @@
       </div>
 
       <form id="saleForm" class="sale-form sale-dialog-form">
-        <label class="full-row">
-          Producto (buscable)
-          <input
-            id="saleProductLookup"
-            type="search"
-            list="saleProductList"
-            placeholder="Escribe N° o nombre del producto"
-            autocomplete="off"
-            required
-          />
-          <datalist id="saleProductList"></datalist>
-          <small class="sale-product-hint">Ejemplo: 1 - Vino ... o solo 1</small>
+        <label class="full-row sale-product-field">
+          Producto
+          <div class="sale-product-picker">
+            <input
+              id="saleProductLookup"
+              type="search"
+              placeholder="Busca por código o nombre"
+              autocomplete="off"
+              required
+            />
+            <button
+              id="saleProductClearBtn"
+              class="sale-product-clear"
+              type="button"
+              aria-label="Limpiar búsqueda de producto"
+            >
+              ×
+            </button>
+          </div>
+          <div id="saleProductDropdown" class="sale-product-dropdown" role="listbox" hidden></div>
+          <small class="sale-product-hint">Escribe código o parte del nombre y toca para seleccionar.</small>
           <input id="saleProductId" type="hidden" />
         </label>
         <label>

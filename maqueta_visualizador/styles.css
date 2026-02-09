@@ -763,6 +763,96 @@ tbody tr:hover {
   color: #5a6d83;
 }
 
+.sale-product-field {
+  position: relative;
+}
+
+.sale-product-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.sale-product-clear {
+  border: 1px solid rgba(16, 32, 52, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+  color: #2f4c67;
+  border-radius: 10px;
+  min-height: 40px;
+  min-width: 40px;
+  font: inherit;
+  font-weight: 800;
+  font-size: 1.02rem;
+  cursor: pointer;
+}
+
+.sale-product-dropdown {
+  border: 1px solid rgba(16, 32, 52, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 26px rgba(16, 32, 52, 0.14);
+  overflow: auto;
+  max-height: 280px;
+}
+
+.sale-product-option {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(16, 32, 52, 0.08);
+  background: transparent;
+  text-align: left;
+  padding: 0.55rem 0.62rem;
+  cursor: pointer;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.sale-product-option:last-child {
+  border-bottom: 0;
+}
+
+.sale-product-option:hover,
+.sale-product-option.is-active {
+  background: linear-gradient(130deg, rgba(226, 240, 255, 0.92), rgba(236, 250, 247, 0.9));
+}
+
+.sale-product-option-main {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.sale-product-option-id {
+  color: #0f2a44;
+  font-size: 0.82rem;
+  min-width: 2.4rem;
+}
+
+.sale-product-option-name {
+  color: #1b3b58;
+  font-size: 0.84rem;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sale-product-option-meta {
+  color: #536983;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.sale-product-empty {
+  margin: 0;
+  padding: 0.58rem 0.62rem;
+  color: #5a6f84;
+  font-size: 0.8rem;
+}
+
 .sale-preview-field {
   background: linear-gradient(130deg, rgba(237, 246, 255, 0.92), rgba(240, 255, 249, 0.9));
   color: #13395f;
@@ -1462,6 +1552,30 @@ tbody tr:hover {
 
   .sales-tools {
     gap: 0.45rem;
+  }
+
+  .sale-product-dropdown {
+    max-height: 46vh;
+  }
+
+  .sale-product-option {
+    padding: 0.66rem 0.68rem;
+  }
+
+  .sale-product-option-main {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.08rem;
+  }
+
+  .sale-product-option-id {
+    min-width: 0;
+  }
+
+  .sale-product-option-name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .sales-date-range {

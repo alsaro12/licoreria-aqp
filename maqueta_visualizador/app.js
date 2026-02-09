@@ -13,9 +13,9 @@ const DEFAULT_SALES_PAGINATION = {
 
 const API_BASE_STORAGE_KEY = "licoreria.api_base_url";
 const MOBILE_KPI_EXPANDED_STORAGE_KEY = "licoreria.mobile_kpi_expanded";
-const FALLBACK_API_BASE_URL = "https://api.escon.pe";
+const FALLBACK_API_BASE_URL = "https://licoreria.escon.pe/";
 const PAYMENT_TYPES = ["A Ya Per", "Efectivo", "Pedido Ya", "Rappi", "EasyPay"];
-const APP_VERSION = "1.0.1";
+const APP_VERSION = "1.0.2";
 
 window.APP_VERSION = APP_VERSION;
 
@@ -52,6 +52,9 @@ const state = {
   accessHost: null,
   salePendingConfirm: null,
   saleEditingId: null,
+  saleLookupResults: [],
+  saleLookupOpen: false,
+  saleLookupHighlight: -1,
   ingressProductId: null,
   mobileNavExpanded: false,
   mobileKpiExpanded: false,
@@ -121,7 +124,8 @@ const refs = {
   saleCancelBtn: document.getElementById("saleCancelBtn"),
   saleForm: document.getElementById("saleForm"),
   saleProductLookup: document.getElementById("saleProductLookup"),
-  saleProductList: document.getElementById("saleProductList"),
+  saleProductClearBtn: document.getElementById("saleProductClearBtn"),
+  saleProductDropdown: document.getElementById("saleProductDropdown"),
   saleProductId: document.getElementById("saleProductId"),
   saleQtyDownBtn: document.getElementById("saleQtyDownBtn"),
   saleCantidad: document.getElementById("saleCantidad"),
@@ -955,6 +959,7 @@ function closeIngressDialog() {
 function setSaleFormLocked(locked) {
   [
     refs.saleProductLookup,
+    refs.saleProductClearBtn,
     refs.saleProductId,
     refs.saleQtyDownBtn,
     refs.saleCantidad,
@@ -965,6 +970,9 @@ function setSaleFormLocked(locked) {
   ].forEach((input) => {
     input.disabled = Boolean(locked);
   });
+  if (locked) {
+    closeSaleLookupDropdown();
+  }
   refs.saleSubmitBtn.disabled = Boolean(locked);
 }
 
@@ -1051,6 +1059,9 @@ function resetSaleForm() {
   hideSaleConfirmBox({ clear: true });
   refs.saleProductLookup.value = "";
   refs.saleProductId.value = "";
+  state.saleLookupResults = [];
+  state.saleLookupOpen = false;
+  state.saleLookupHighlight = -1;
   setSaleQuantityValue(1);
   refs.salePrecioPreview.value = "-";
   refs.saleTotalPreview.value = "-";
@@ -1130,6 +1141,7 @@ function closeSaleDialog() {
   if (!refs.saleDialog.open) return;
   refs.saleDialog.close();
   hideSaleConfirmBox({ clear: true });
+  closeSaleLookupDropdown();
 }
 
 function openCreateDialog() {
@@ -1323,6 +1335,144 @@ function formatSaleLookupLabel(product) {
   return `${product["N°"]} - ${product.NOMBRE}`;
 }
 
+function findSaleProductById(id) {
+  const productId = Number.parseInt(String(id ?? ""), 10);
+  if (!productId) return null;
+  return getSaleProductsSource().find((item) => Number(item["N°"]) === productId) || null;
+}
+
+function rankSaleProductMatch(product, query, parts) {
+  const idText = String(product["N°"] ?? "").trim();
+  const nameText = String(product.NOMBRE ?? "").trim();
+  const idNorm = normalizeText(idText);
+  const nameNorm = normalizeText(nameText);
+  const haystack = `${idNorm} ${nameNorm}`;
+
+  let score = 0;
+  if (idNorm === query) score += 120;
+  else if (idNorm.startsWith(query)) score += 90;
+  else if (idNorm.includes(query)) score += 72;
+
+  if (nameNorm === query) score += 110;
+  else if (nameNorm.startsWith(query)) score += 86;
+  else if (nameNorm.includes(query)) score += 62;
+
+  if (parts.length > 1 && parts.every((part) => haystack.includes(part))) {
+    score += 46;
+  }
+
+  return score;
+}
+
+function buildSaleLookupResults(rawLookup) {
+  const products = getSaleProductsSource();
+  if (!products.length) return [];
+
+  const query = normalizeText(rawLookup);
+  if (!query) {
+    return products.slice(0, 60);
+  }
+
+  const parts = query.split(/\s+/).filter(Boolean);
+  return products
+    .map((item) => ({
+      item,
+      score: rankSaleProductMatch(item, query, parts)
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => {
+      if (left.score !== right.score) return right.score - left.score;
+      return Number(left.item["N°"] || 0) - Number(right.item["N°"] || 0);
+    })
+    .slice(0, 60)
+    .map((entry) => entry.item);
+}
+
+function openSaleLookupDropdown() {
+  state.saleLookupOpen = true;
+  renderSaleLookupDropdown();
+}
+
+function closeSaleLookupDropdown() {
+  state.saleLookupOpen = false;
+  refs.saleProductDropdown.hidden = true;
+}
+
+function renderSaleLookupDropdown() {
+  const dropdown = refs.saleProductDropdown;
+  const results = Array.isArray(state.saleLookupResults) ? state.saleLookupResults : [];
+
+  if (!state.saleLookupOpen) {
+    dropdown.hidden = true;
+    return;
+  }
+
+  if (!results.length) {
+    dropdown.innerHTML = '<p class="sale-product-empty">Sin coincidencias.</p>';
+    dropdown.hidden = false;
+    return;
+  }
+
+  dropdown.innerHTML = results
+    .map((item, index) => {
+      const isActive = index === state.saleLookupHighlight;
+      return `
+        <button
+          class="sale-product-option${isActive ? " is-active" : ""}"
+          type="button"
+          data-sale-option-index="${index}"
+          role="option"
+          aria-selected="${isActive ? "true" : "false"}"
+        >
+          <span class="sale-product-option-main">
+            <strong class="sale-product-option-id">#${esc(item["N°"])}</strong>
+            <span class="sale-product-option-name">${esc(item.NOMBRE)}</span>
+          </span>
+          <small class="sale-product-option-meta">Stock: ${esc(formatQty(item.STOCK_ACTUAL))} · ${esc(
+            money(item.PRECIO)
+          )}</small>
+        </button>
+      `;
+    })
+    .join("");
+
+  dropdown.hidden = false;
+}
+
+function refreshSaleLookupResults(options = {}) {
+  const keepHighlight = Boolean(options.keepHighlight);
+  state.saleLookupResults = buildSaleLookupResults(refs.saleProductLookup.value);
+
+  if (!state.saleLookupResults.length) {
+    state.saleLookupHighlight = -1;
+  } else if (
+    !keepHighlight ||
+    state.saleLookupHighlight < 0 ||
+    state.saleLookupHighlight >= state.saleLookupResults.length
+  ) {
+    state.saleLookupHighlight = 0;
+  }
+
+  if (options.open) {
+    openSaleLookupDropdown();
+  } else {
+    renderSaleLookupDropdown();
+  }
+}
+
+function applySaleProductSelection(product, options = {}) {
+  if (!product) return;
+  refs.saleProductLookup.value = formatSaleLookupLabel(product);
+  refs.saleProductId.value = String(product["N°"]);
+  updateSaleTotalsPreview();
+
+  if (options.keepDropdownOpen) {
+    refreshSaleLookupResults({ open: true, keepHighlight: true });
+  } else {
+    closeSaleLookupDropdown();
+  }
+}
+
 function resolveSaleProductByLookup(rawLookup) {
   const products = getSaleProductsSource();
   const value = String(rawLookup ?? "").trim();
@@ -1338,14 +1488,27 @@ function resolveSaleProductByLookup(rawLookup) {
   }
 
   const normalized = normalizeText(value);
-  return (
+  const exact =
     products.find((item) => normalizeText(formatSaleLookupLabel(item)) === normalized) ||
     products.find((item) => normalizeText(item.NOMBRE) === normalized) ||
-    null
-  );
+    null;
+  if (exact) return exact;
+
+  const matches = buildSaleLookupResults(value);
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function syncSaleProductIdFromLookup() {
+  const selectedById = findSaleProductById(refs.saleProductId.value);
+  if (selectedById) {
+    const lookupNormalized = normalizeText(refs.saleProductLookup.value);
+    const selectedLabel = normalizeText(formatSaleLookupLabel(selectedById));
+    if (lookupNormalized === selectedLabel) {
+      updateSaleTotalsPreview();
+      return selectedById;
+    }
+  }
+
   const product = resolveSaleProductByLookup(refs.saleProductLookup.value);
   refs.saleProductId.value = product ? String(product["N°"]) : "";
   updateSaleTotalsPreview();
@@ -1357,34 +1520,34 @@ function renderSaleProductOptions() {
   const previous = refs.saleProductId.value;
 
   if (!products.length) {
-    refs.saleProductList.innerHTML = "";
+    refs.saleProductDropdown.innerHTML = "";
     refs.saleProductLookup.value = "";
     refs.saleProductId.value = "";
     refs.saleProductLookup.disabled = true;
+    refs.saleProductClearBtn.disabled = true;
+    closeSaleLookupDropdown();
     return;
   }
 
-  refs.saleProductList.innerHTML = products
-    .map((item) => {
-      const value = formatSaleLookupLabel(item);
-      const label = `Stock: ${formatQty(item.STOCK_ACTUAL)}`;
-      return `<option value="${esc(value)}" label="${esc(label)}"></option>`;
-    })
-    .join("");
-
   refs.saleProductLookup.disabled = false;
+  refs.saleProductClearBtn.disabled = false;
 
   if (previous) {
     const selected = products.find((item) => String(item["N°"]) === String(previous));
     if (selected) {
       refs.saleProductLookup.value = formatSaleLookupLabel(selected);
       refs.saleProductId.value = String(selected["N°"]);
+      refreshSaleLookupResults({ open: false });
+      updateSaleTotalsPreview();
       return;
     }
   }
 
   const byLookup = syncSaleProductIdFromLookup();
-  if (byLookup) return;
+  if (byLookup) {
+    refreshSaleLookupResults({ open: false });
+    return;
+  }
 
   if (!state.saleEditingId && products.length) {
     const first = products[0];
@@ -1393,6 +1556,7 @@ function renderSaleProductOptions() {
   } else {
     refs.saleProductId.value = "";
   }
+  refreshSaleLookupResults({ open: false });
   updateSaleTotalsPreview();
 }
 
@@ -2020,10 +2184,6 @@ function bindEvents() {
     refreshLocalSales();
   });
 
-  const onLookupSaleProductDebounced = debounce(() => {
-    syncSaleProductIdFromLookup();
-  }, 120);
-
   const onSearchKardexDebounced = debounce(() => {
     refreshLocalKardex();
   });
@@ -2050,6 +2210,10 @@ function bindEvents() {
     refs.kardexTypeFilter.value = "TODOS";
     refs.saleProductLookup.value = "";
     refs.saleProductId.value = "";
+    state.saleLookupResults = [];
+    state.saleLookupOpen = false;
+    state.saleLookupHighlight = -1;
+    closeSaleLookupDropdown();
     closeDialog();
     closeSaleDialog();
     closeIngressDialog();
@@ -2162,7 +2326,50 @@ function bindEvents() {
   });
 
   refs.saleProductLookup.addEventListener("input", () => {
-    onLookupSaleProductDebounced();
+    syncSaleProductIdFromLookup();
+    refreshSaleLookupResults({ open: true });
+  });
+
+  refs.saleProductLookup.addEventListener("focus", () => {
+    refreshSaleLookupResults({ open: true });
+  });
+
+  refs.saleProductLookup.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeSaleLookupDropdown();
+      return;
+    }
+
+    if (!state.saleLookupOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      refreshSaleLookupResults({ open: true });
+      event.preventDefault();
+      return;
+    }
+
+    const results = Array.isArray(state.saleLookupResults) ? state.saleLookupResults : [];
+    if (!results.length) return;
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      state.saleLookupHighlight = Math.min(state.saleLookupHighlight + 1, results.length - 1);
+      renderSaleLookupDropdown();
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      state.saleLookupHighlight = Math.max(state.saleLookupHighlight - 1, 0);
+      renderSaleLookupDropdown();
+      return;
+    }
+
+    if (event.key === "Enter" && state.saleLookupOpen) {
+      const candidate = results[state.saleLookupHighlight] || results[0];
+      if (candidate) {
+        event.preventDefault();
+        applySaleProductSelection(candidate);
+      }
+    }
   });
 
   refs.saleProductLookup.addEventListener("change", () => {
@@ -2170,6 +2377,39 @@ function bindEvents() {
     if (selected) {
       refs.saleProductLookup.value = formatSaleLookupLabel(selected);
     }
+    closeSaleLookupDropdown();
+  });
+
+  refs.saleProductLookup.addEventListener("blur", () => {
+    window.setTimeout(() => {
+      closeSaleLookupDropdown();
+    }, 120);
+  });
+
+  refs.saleProductClearBtn.addEventListener("click", () => {
+    refs.saleProductLookup.value = "";
+    refs.saleProductId.value = "";
+    updateSaleTotalsPreview();
+    refreshSaleLookupResults({ open: true });
+    refs.saleProductLookup.focus();
+  });
+
+  refs.saleProductDropdown.addEventListener("mousedown", (event) => {
+    const option = event.target.closest("[data-sale-option-index]");
+    if (!option) return;
+    event.preventDefault();
+    const index = Number.parseInt(String(option.dataset.saleOptionIndex || ""), 10);
+    if (!Number.isInteger(index) || index < 0) return;
+    const product = state.saleLookupResults[index];
+    if (!product) return;
+    applySaleProductSelection(product);
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest(".sale-product-field")) return;
+    closeSaleLookupDropdown();
   });
 
   refs.saleCantidad.addEventListener("input", () => {
