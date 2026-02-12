@@ -28,7 +28,7 @@
     state.filteredSales = state.sales.filter(
       (item) =>
         matchSale(item, state.salesSearch) &&
-        matchDateRange(item.FECHA_VENTA, state.salesDateFrom, state.salesDateTo)
+        matchDateRange(item.FECHA_OPERATIVA || item.FECHA_VENTA, state.salesDateFrom, state.salesDateTo)
     );
 
     const paged = paginate(state.filteredSales, state.salesPagination.page, state.salesPagination.pageSize);
@@ -401,7 +401,7 @@
       if (!from || !to) {
         const source = state.filteredSales.length ? state.filteredSales : state.sales;
         const dates = source
-          .map((item) => normalizeDateValue(item.FECHA_VENTA))
+          .map((item) => normalizeDateValue(item.FECHA_OPERATIVA || item.FECHA_VENTA))
           .filter((value) => Boolean(value))
           .sort((a, b) => a.localeCompare(b));
         if (!from) from = dates[0] || todayInputValue();

@@ -2344,7 +2344,7 @@ async function handleVentasCollection(req, res, query) {
     const to = normalizeIsoDateOnly(query.get("to"));
     const statusFilter = normalizeText(query.get("estado") || "todos");
     const filtered = items.filter((item) => {
-      if (!matchDateRange(item.FECHA_VENTA, from, to)) return false;
+      if (!matchDateRange(item.FECHA_OPERATIVA || item.FECHA_VENTA, from, to)) return false;
       const itemStatus = normalizeText(item.ESTADO || "ACTIVA");
       const matchesStatus = !statusFilter || statusFilter === "todos" || itemStatus === statusFilter;
       if (!matchesStatus) return false;
@@ -2362,11 +2362,12 @@ async function handleVentasCollection(req, res, query) {
     const sorted = sortItems(filtered, {
       sortBy: trimValue(query.get("sortBy") || ""),
       sortDir: query.get("sortDir"),
-      defaultSortBy: "FECHA_VENTA",
+      defaultSortBy: "FECHA_OPERATIVA",
       defaultSortDir: "desc",
       allowed: {
         FECHA_VENTA: (item) => normalizeIsoDateOnly(item.FECHA_VENTA) || "",
-        FECHA_OPERATIVA: (item) => normalizeIsoDateOnly(item.FECHA_OPERATIVA) || "",
+        FECHA_OPERATIVA: (item) =>
+          normalizeIsoDateOnly(item.FECHA_OPERATIVA) || normalizeIsoDateOnly(item.FECHA_VENTA) || "",
         "N°": (item) => toInt(item["N°"], 0),
         NOMBRE: (item) => trimValue(item.NOMBRE || ""),
         CANTIDAD: (item) => toNumber(item.CANTIDAD, 0),

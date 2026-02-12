@@ -54,7 +54,7 @@ const state = {
   kardexType: "TODOS",
   serverBackedTables: true,
   productSort: { key: "N°", dir: "asc" },
-  salesSort: { key: "FECHA_VENTA", dir: "desc" },
+  salesSort: { key: "FECHA_OPERATIVA", dir: "desc" },
   kardexSort: { key: "FECHA_HORA", dir: "desc" },
   editingId: null,
   apiConnected: false,
@@ -1049,7 +1049,7 @@ function renderKpis() {
   const kardexSource = state.kardexAll.length ? state.kardexAll : state.kardex;
   const salesInRange = salesSource.filter((item) =>
     String(item?.ESTADO || "ACTIVA").toUpperCase() !== "ANULADA" &&
-    matchDateRange(item.FECHA_VENTA, state.salesDateFrom, state.salesDateTo)
+    matchDateRange(item.FECHA_OPERATIVA || item.FECHA_VENTA, state.salesDateFrom, state.salesDateTo)
   );
   const kardexInRange = kardexSource.filter((item) =>
     matchDateRange(item.FECHA_HORA, state.salesDateFrom, state.salesDateTo)
@@ -1459,7 +1459,7 @@ function bindEvents() {
     state.kardexSearch = "";
     state.kardexType = "TODOS";
     state.productSort = { key: "N°", dir: "asc" };
-    state.salesSort = { key: "FECHA_VENTA", dir: "desc" };
+    state.salesSort = { key: "FECHA_OPERATIVA", dir: "desc" };
     state.kardexSort = { key: "FECHA_HORA", dir: "desc" };
     state.pagination.page = 1;
     state.salesPagination.page = 1;
