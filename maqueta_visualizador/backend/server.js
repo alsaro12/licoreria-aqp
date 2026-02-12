@@ -84,6 +84,18 @@ function extractIsoDateOnly(value) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function formatDateTimeMinutes(value) {
+  const text = trimValue(value ?? "");
+  if (!text) return "";
+  const normalized = text.replace("T", " ").replace(/\s+/g, " ").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized;
+  const match = normalized.match(/^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2})/);
+  if (match) return `${match[1]} ${match[2]}`;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return normalized;
+  return parsed.toISOString().slice(0, 16).replace("T", " ");
+}
+
 function normalizeSaleDateTimeInput(value) {
   const text = trimValue(value ?? "");
   if (!text) return null;
@@ -853,7 +865,7 @@ function productRowToApi(row) {
 
 function saleRowToApi(row) {
   const saleDate = extractIsoDateOnly(row?.fecha_venta) || todayIsoDate();
-  const operativeDate = extractIsoDateOnly(row?.fecha_operativa) || "";
+  const operativeDate = formatDateTimeMinutes(row?.fecha_operativa || row?.fecha_venta);
   const saleStatus = normalizeText(row?.estado || "ACTIVA") === "anulada" ? "ANULADA" : "ACTIVA";
   return {
     ID_VENTA: toInt(row?.id_venta, 0),
@@ -2366,8 +2378,7 @@ async function handleVentasCollection(req, res, query) {
       defaultSortDir: "desc",
       allowed: {
         FECHA_VENTA: (item) => normalizeIsoDateOnly(item.FECHA_VENTA) || "",
-        FECHA_OPERATIVA: (item) =>
-          normalizeIsoDateOnly(item.FECHA_OPERATIVA) || normalizeIsoDateOnly(item.FECHA_VENTA) || "",
+        FECHA_OPERATIVA: (item) => trimValue(item.FECHA_OPERATIVA || item.FECHA_VENTA || ""),
         "N°": (item) => toInt(item["N°"], 0),
         NOMBRE: (item) => trimValue(item.NOMBRE || ""),
         CANTIDAD: (item) => toNumber(item.CANTIDAD, 0),

@@ -43,7 +43,8 @@
 
   function normalizeDateValue(value) {
     const text = String(value ?? "").trim();
-    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+    const head = text.slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(head) ? head : "";
   }
 
   function matchDateRange(rawDate, fromDate, toDate) {
