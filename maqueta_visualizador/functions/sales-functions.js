@@ -415,14 +415,14 @@
       const params = new URLSearchParams();
       params.set("from", from);
       params.set("to", to);
-      params.set("format", "excelxml");
+      params.set("format", "xlsx");
       const search = String(state.salesSearch || "").trim();
       if (search) params.set("q", search);
 
-      const defaultFileName = `ventas_diarias_resumen_${from}_a_${to}_color.xml`;
+      const defaultFileName = `ventas_diarias_resumen_${from}_a_${to}.xlsx`;
       const previousText = refs.exportSalesCsvBtn.textContent;
       refs.exportSalesCsvBtn.disabled = true;
-      refs.exportSalesCsvBtn.textContent = "Exportando reporte...";
+      refs.exportSalesCsvBtn.textContent = "Exportando Excel...";
 
       try {
         const response = await fetch(buildApiUrl(`/api/ventas/export/csv?${params.toString()}`));

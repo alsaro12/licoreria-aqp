@@ -163,6 +163,131 @@ function htmlEscape(value) {
     .replace(/'/g, "&#39;");
 }
 
+const ZIP_CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let j = 0; j < 8; j += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < buffer.length; i += 1) {
+    const index = (crc ^ buffer[i]) & 0xff;
+    crc = ZIP_CRC32_TABLE[index] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function toDosDate(date = new Date()) {
+  const year = Math.max(1980, date.getUTCFullYear());
+  const month = date.getUTCMonth() + 1;
+  const day = date.getUTCDate();
+  return ((year - 1980) << 9) | (month << 5) | day;
+}
+
+function toDosTime(date = new Date()) {
+  const hours = date.getUTCHours();
+  const minutes = date.getUTCMinutes();
+  const seconds = Math.floor(date.getUTCSeconds() / 2);
+  return (hours << 11) | (minutes << 5) | seconds;
+}
+
+function buildZip(entries) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  const dosDate = toDosDate(new Date());
+  const dosTime = toDosTime(new Date());
+
+  for (const entry of entries) {
+    const nameBuffer = Buffer.from(String(entry.name || ""), "utf8");
+    const dataBuffer = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(String(entry.data || ""), "utf8");
+    const crc = crc32(dataBuffer);
+    const size = dataBuffer.length;
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(dosTime, 10);
+    localHeader.writeUInt16LE(dosDate, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(size, 18);
+    localHeader.writeUInt32LE(size, 22);
+    localHeader.writeUInt16LE(nameBuffer.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    localParts.push(localHeader, nameBuffer, dataBuffer);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(dosTime, 12);
+    centralHeader.writeUInt16LE(dosDate, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(size, 20);
+    centralHeader.writeUInt32LE(size, 24);
+    centralHeader.writeUInt16LE(nameBuffer.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+    centralParts.push(centralHeader, nameBuffer);
+
+    offset += localHeader.length + nameBuffer.length + dataBuffer.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const endRecord = Buffer.alloc(22);
+  endRecord.writeUInt32LE(0x06054b50, 0);
+  endRecord.writeUInt16LE(0, 4);
+  endRecord.writeUInt16LE(0, 6);
+  endRecord.writeUInt16LE(entries.length, 8);
+  endRecord.writeUInt16LE(entries.length, 10);
+  endRecord.writeUInt32LE(centralDirectory.length, 12);
+  endRecord.writeUInt32LE(offset, 16);
+  endRecord.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localParts, centralDirectory, endRecord]);
+}
+
+function columnNumberToLetters(index) {
+  let num = toInt(index, 0);
+  if (num <= 0) return "A";
+  let letters = "";
+  while (num > 0) {
+    const modulo = (num - 1) % 26;
+    letters = String.fromCharCode(65 + modulo) + letters;
+    num = Math.floor((num - modulo - 1) / 26);
+  }
+  return letters;
+}
+
+function xlsxInlineStringCell(cellRef, styleId, value) {
+  const text = String(value ?? "");
+  const preserve = /^\s|\s$|\n|\r|\t/.test(text) ? ' xml:space="preserve"' : "";
+  return `<c r="${cellRef}" s="${styleId}" t="inlineStr"><is><t${preserve}>${htmlEscape(text)}</t></is></c>`;
+}
+
+function xlsxNumericCell(cellRef, styleId, value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return `<c r="${cellRef}" s="${styleId}"/>`;
+  }
+  return `<c r="${cellRef}" s="${styleId}"><v>${num}</v></c>`;
+}
+
 function formatQtyCsv(value, options = {}) {
   const blankIfZero = Boolean(options.blankIfZero);
   const number = round2(toNumber(value, 0));
@@ -1920,6 +2045,205 @@ ${rows.map((line) => `   ${line}`).join("\n")}
   };
 }
 
+function buildDailySalesExportXlsx(exportData) {
+  const from = normalizeIsoDateOnly(exportData?.from) || todayIsoDate();
+  const to = normalizeIsoDateOnly(exportData?.to) || from;
+  const dates = Array.isArray(exportData?.dates) ? exportData.dates : [];
+  const reportRows = Array.isArray(exportData?.reportRows) ? exportData.reportRows : [];
+  const totalColumns = Math.max(3, 3 + dates.length * 3);
+  const totalRows = 2 + reportRows.length;
+
+  const rows = [];
+  const topRow = [];
+  topRow.push({ col: 1, kind: "s", style: 1, value: "N°" });
+  topRow.push({ col: 2, kind: "s", style: 1, value: "NOMBRE" });
+  topRow.push({ col: 3, kind: "s", style: 2, value: "PRECIO" });
+  for (let i = 0; i < dates.length; i += 1) {
+    const startCol = 4 + i * 3;
+    topRow.push({ col: startCol, kind: "s", style: 3, value: formatReportDateHeader(dates[i]) });
+  }
+  rows.push(topRow);
+
+  const secondRow = [];
+  for (let i = 0; i < dates.length; i += 1) {
+    const startCol = 4 + i * 3;
+    secondRow.push({ col: startCol, kind: "s", style: 4, value: "INICIO" });
+    secondRow.push({ col: startCol + 1, kind: "s", style: 5, value: "VENTA DEL DIA" });
+    secondRow.push({ col: startCol + 2, kind: "s", style: 4, value: "CIERRE" });
+  }
+  rows.push(secondRow);
+
+  for (const reportRow of reportRows) {
+    const line = [];
+    line.push({ col: 1, kind: "n", style: 7, value: toInt(reportRow.id, 0) });
+    line.push({ col: 2, kind: "s", style: 6, value: reportRow.nombre || "" });
+    line.push({ col: 3, kind: "n", style: 8, value: round2(toNumber(reportRow.precio, 0)) });
+
+    for (let i = 0; i < dates.length; i += 1) {
+      const startCol = 4 + i * 3;
+      const day = reportRow.byDay?.get(dates[i]) || { inicio: 0, ventaDia: 0, cierre: 0 };
+      const inicio = round2(toNumber(day.inicio, 0));
+      const venta = round2(toNumber(day.ventaDia, 0));
+      const cierre = round2(toNumber(day.cierre, 0));
+      line.push({ col: startCol, kind: "n", style: 7, value: inicio });
+      if (Math.abs(venta) < 0.0000001) {
+        line.push({ col: startCol + 1, kind: "s", style: 9, value: "" });
+      } else {
+        line.push({ col: startCol + 1, kind: "n", style: 9, value: venta });
+      }
+      line.push({ col: startCol + 2, kind: "n", style: 7, value: cierre });
+    }
+    rows.push(line);
+  }
+
+  const mergeRanges = ["A1:A2", "B1:B2", "C1:C2"];
+  for (let i = 0; i < dates.length; i += 1) {
+    const startCol = 4 + i * 3;
+    const endCol = startCol + 2;
+    mergeRanges.push(`${columnNumberToLetters(startCol)}1:${columnNumberToLetters(endCol)}1`);
+  }
+
+  const rowXml = rows
+    .map((cells, rowIndex) => {
+      const rowNumber = rowIndex + 1;
+      const sortedCells = [...cells].sort((a, b) => a.col - b.col);
+      const cellXml = sortedCells
+        .map((cell) => {
+          const cellRef = `${columnNumberToLetters(cell.col)}${rowNumber}`;
+          return cell.kind === "n"
+            ? xlsxNumericCell(cellRef, cell.style, cell.value)
+            : xlsxInlineStringCell(cellRef, cell.style, cell.value);
+        })
+        .join("");
+      return `<row r="${rowNumber}">${cellXml}</row>`;
+    })
+    .join("");
+
+  const dimensionRef = `A1:${columnNumberToLetters(totalColumns)}${Math.max(totalRows, 1)}`;
+
+  const worksheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <dimension ref="${dimensionRef}"/>
+  <sheetViews>
+    <sheetView workbookViewId="0"/>
+  </sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <sheetData>${rowXml}</sheetData>
+  <mergeCells count="${mergeRanges.length}">
+    ${mergeRanges.map((ref) => `<mergeCell ref="${ref}"/>`).join("")}
+  </mergeCells>
+</worksheet>`;
+
+  const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="3">
+    <font><sz val="11"/><name val="Calibri"/><family val="2"/></font>
+    <font><b/><sz val="11"/><name val="Calibri"/><family val="2"/><color rgb="FF111111"/></font>
+    <font><b/><sz val="11"/><name val="Calibri"/><family val="2"/><color rgb="FFC1121F"/></font>
+  </fonts>
+  <fills count="8">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF9AD14B"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF36B37E"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFD4AF37"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFF3F4F6"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFD8F3DC"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFF6C49F"/><bgColor indexed="64"/></patternFill></fill>
+  </fills>
+  <borders count="2">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+    <border>
+      <left style="thin"><color auto="1"/></left>
+      <right style="thin"><color auto="1"/></right>
+      <top style="thin"><color auto="1"/></top>
+      <bottom style="thin"><color auto="1"/></bottom>
+      <diagonal/>
+    </border>
+  </borders>
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+  <cellXfs count="10">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="2" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="1" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="2" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="2" fontId="1" fillId="6" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="2" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+  </cellXfs>
+  <cellStyles count="1">
+    <cellStyle name="Normal" xfId="0" builtinId="0"/>
+  </cellStyles>
+</styleSheet>`;
+
+  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Ventas Diarias" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`;
+
+  const workbookRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+
+  const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`;
+
+  const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`;
+
+  const now = new Date().toISOString();
+  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:creator>Licoreria</dc:creator>
+  <cp:lastModifiedBy>Licoreria</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified>
+</cp:coreProperties>`;
+
+  const appXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Licoreria App</Application>
+</Properties>`;
+
+  const content = buildZip([
+    { name: "[Content_Types].xml", data: Buffer.from(contentTypesXml, "utf8") },
+    { name: "_rels/.rels", data: Buffer.from(relsXml, "utf8") },
+    { name: "docProps/core.xml", data: Buffer.from(coreXml, "utf8") },
+    { name: "docProps/app.xml", data: Buffer.from(appXml, "utf8") },
+    { name: "xl/workbook.xml", data: Buffer.from(workbookXml, "utf8") },
+    { name: "xl/_rels/workbook.xml.rels", data: Buffer.from(workbookRelsXml, "utf8") },
+    { name: "xl/styles.xml", data: Buffer.from(stylesXml, "utf8") },
+    { name: "xl/worksheets/sheet1.xml", data: Buffer.from(worksheetXml, "utf8") }
+  ]);
+
+  return {
+    content,
+    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    fileName: sanitizeCsvFileName(`ventas_diarias_resumen_${from}_a_${to}.xlsx`)
+  };
+}
+
 async function handleProductsCollection(req, res, query) {
   if (req.method === "GET") {
     const items = await readProductsAll();
@@ -2196,6 +2520,7 @@ const API_OBJECT_ROUTE_HANDLERS = [
     withMysqlConnection,
     buildDailySalesExportCsv,
     buildDailySalesExportStyledSpreadsheet,
+    buildDailySalesExportXlsx,
     appendLog,
     normalizeText
   }),

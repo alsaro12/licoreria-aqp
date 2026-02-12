@@ -12,6 +12,7 @@ function createVentasObjectServer(deps) {
     withMysqlConnection,
     buildDailySalesExportCsv,
     buildDailySalesExportStyledSpreadsheet,
+    buildDailySalesExportXlsx,
     appendLog,
     normalizeText
   } = deps;
@@ -25,6 +26,7 @@ function createVentasObjectServer(deps) {
 
       const traceId = `sales-export-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       const exportFormat = normalizeText(query.get("format") || "csv");
+      const wantsXlsx = exportFormat === "xlsx";
       const wantsStyledExcel =
         exportFormat === "xls" ||
         exportFormat === "excel" ||
@@ -41,6 +43,26 @@ function createVentasObjectServer(deps) {
           })
         );
 
+        if (wantsXlsx) {
+          const xlsxResult = buildDailySalesExportXlsx(result);
+          await appendLog("INFO", "Export ventas XLSX generado", {
+            traceId,
+            from: result.from,
+            to: result.to,
+            rows: result.rows,
+            days: result.days,
+            fileName: xlsxResult.fileName,
+            bytes: xlsxResult.content.length
+          });
+
+          res.writeHead(200, {
+            "Content-Type": xlsxResult.contentType,
+            "Content-Disposition": `attachment; filename="${xlsxResult.fileName}"`
+          });
+          res.end(xlsxResult.content);
+          return true;
+        }
+
         if (wantsStyledExcel) {
           const excelResult = buildDailySalesExportStyledSpreadsheet(result);
           await appendLog("INFO", "Export ventas Excel con formato generado", {
@@ -50,7 +72,9 @@ function createVentasObjectServer(deps) {
             rows: result.rows,
             days: result.days,
             fileName: excelResult.fileName,
-            bytes: Buffer.byteLength(excelResult.content, "utf8")
+            bytes: Buffer.isBuffer(excelResult.content)
+              ? excelResult.content.length
+              : Buffer.byteLength(excelResult.content, "utf8")
           });
 
           res.writeHead(200, {
