@@ -26,7 +26,12 @@ function createVentasObjectServer(deps) {
 
       const traceId = `sales-export-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       const exportFormat = normalizeText(query.get("format") || "csv");
-      const wantsXlsx = exportFormat === "xlsx";
+      const wantsXlsx =
+        exportFormat === "xlsx" ||
+        exportFormat === "xls" ||
+        exportFormat === "excel" ||
+        exportFormat === "xml" ||
+        exportFormat === "excelxml";
       const wantsStyledExcel =
         exportFormat === "xls" ||
         exportFormat === "excel" ||
